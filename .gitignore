@@ -1,0 +1,18 @@
+# Real statements and spreadsheets stay out of git.
+*.csv
+!sample_data/
+!sample_data/*.csv
+*.xlsx
+*.xls
+.streamlit/secrets.toml
+data/
+
+# Local secrets and environments
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
