@@ -33,20 +33,27 @@ def is_card_payment(
     merchant: object = "",
     description: object = "",
 ) -> bool:
-    """Return True when a row is a payment to the card, not a purchase or refund.
+    """Return True only for a credit that pays the card down.
 
-    Only negative amounts can be payments. A payment is a negative row whose
-    category looks like a loan payment or a transfer, or whose merchant or
-    description contains PAYMENT, PYMT, AUTOPAY, or AUTO PAY.
+    The amount must be negative in the positive=charge convention. A charge
+    stays in spend even when the text contains PYMT or PAYMENT, such as
+    "US TREAS TAX PYMT" or "ACME PAYMENT PROCESSING". A credit is a payment
+    when its category looks like a loan payment or a transfer, or when its
+    merchant or description contains PAYMENT, PYMT, AUTOPAY, or AUTO PAY.
     """
     number = _as_float(amount)
-    if number is None or number >= 0:
+    if not _is_credit(number):
         return False
     category_text = _text(category).lower()
     if any(phrase in category_text for phrase in _CATEGORY_PHRASES):
         return True
     blob = f"{_text(merchant)} {_text(description)}".upper()
     return any(token in blob for token in ("PAYMENT", "PYMT", "AUTOPAY", "AUTO PAY"))
+
+
+def _is_credit(number: float | None) -> bool:
+    """True when the amount reduces the balance (negative). Zero is not a credit."""
+    return number is not None and number < 0
 
 
 @dataclass(frozen=True)

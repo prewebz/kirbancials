@@ -37,6 +37,44 @@ class PaymentTests(unittest.TestCase):
         self.assertFalse(is_card_payment(0, "Payment", "PAYMENT THANK YOU", ""))
         self.assertFalse(is_card_payment(None, "Loan Payments", "PAYMENT", "PAYMENT"))
 
+    def test_charges_that_mention_payment_are_still_spend(self) -> None:
+        self.assertFalse(is_card_payment(500, "Taxes", "US TREAS TAX PYMT", "federal tax"))
+        self.assertFalse(is_card_payment(20, "Services", "ACME PAYMENT PROCESSING", "processor fee"))
+        transactions = pd.DataFrame(
+            [
+                {
+                    "Account": "Citi AAdvantage card ending 7690",
+                    "Date": date(2026, 11, 2),
+                    "Amount": 500,
+                    "Pending": False,
+                    "Category": "Taxes",
+                    "Merchant": "US TREAS TAX PYMT",
+                    "Description": "federal tax",
+                },
+                {
+                    "Account": "Citi AAdvantage card ending 7690",
+                    "Date": date(2026, 11, 3),
+                    "Amount": 20,
+                    "Pending": False,
+                    "Category": "Services",
+                    "Merchant": "ACME PAYMENT PROCESSING",
+                    "Description": "processor fee",
+                },
+                {
+                    "Account": "Citi AAdvantage card ending 7690",
+                    "Date": date(2026, 11, 4),
+                    "Amount": -80,
+                    "Pending": False,
+                    "Category": "Payment",
+                    "Merchant": "CAPITAL ONE MOBILE PYMT",
+                    "Description": "card payment",
+                },
+            ]
+        )
+        lines = expense_lines(transactions, pd.DataFrame(), resolve_period("this-month", TODAY))
+        citi = next(line for line in lines if line.source_id == "citi")
+        self.assertEqual(citi.total, 520)
+
 
 class PeriodTests(unittest.TestCase):
     def test_this_month_stops_at_today_and_starts_on_the_first(self) -> None:
