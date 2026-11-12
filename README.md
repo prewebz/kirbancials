@@ -4,7 +4,7 @@ Personal finance dashboard for credit card statement summaries and other expense
 
 After login the landing page is **Profit & Loss**. It totals income (none connected yet) and expenses for a period you pick. Each expense name links to that source. **Daily spending** and **Monthly statements** stay available from the sidebar.
 
-Expense sources are registered in `kirbancials/sources.py`. Citibank - 7690 reads transactions for `Citi AAdvantage card ending 7690`. Nordstrom - 5488 reads statement months for `Nordstrom card ending 5488`. Any other Account in the data is still listed under its own name. See [Adding sources](#adding-sources).
+Expense sources are registered in `kirbancials/sources.py`. Citibank - 7690 reads transactions for `Citi AAdvantage card ending 7690`. Nordstrom reads statement months for `Nordstrom card ending 5488`. Any other Account in the data is still listed under its own name. See [Adding sources](#adding-sources).
 
 Real statements and transactions never belong in git. The repository includes only fake round numbers under `sample_data/` for local development.
 
@@ -88,7 +88,7 @@ Expenses are one row per source: description, total spend, and data through. Tot
 
 Transaction sources (such as Citibank - 7690) sum charges and subtract refunds. Pending charges are included. A negative row is a card payment, and is left out, when its category looks like `Loan Payments`, `Transfer In`, or `Transfer Out`, or when the merchant or description contains `PAYMENT`, `PYMT`, `AUTOPAY`, or `AUTO PAY`. A positive charge is still spend even if the text contains those words. That rule is `is_card_payment` in `kirbancials/spend.py`.
 
-Statement sources (Nordstrom - 5488) sum `Net Spend` plus interest and fees for months whose statement closing date falls in the period. If the closing date is blank, the first day of `Month` is used so the row is not dropped. Quarter and year total rows are not added again.
+Statement sources (Nordstrom) sum `Net Spend` plus interest and fees for months whose statement closing date falls in the period. If the closing date is blank, the first day of `Month` is used so the row is not dropped. Quarter and year total rows are not added again.
 
 Net profit / (loss) is total income minus total expenses. A loss is shown as `-$1,234.56`.
 

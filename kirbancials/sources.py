@@ -50,6 +50,30 @@ EXPENSE_SOURCES: tuple[ExpenseSource, ...] = (
         accounts=("Bank of America card ending 5225",),
     ),
     ExpenseSource(
+        id="bofa_pw_corp_2238",
+        name="Premium Web Corp - 2238",
+        data_type="transactions",
+        accounts=("Premium Web Corp card ending 2238",),
+    ),
+    ExpenseSource(
+        id="bofa_pw_8330",
+        name="Premium Web - 8330",
+        data_type="transactions",
+        accounts=("Premium Web card ending 8330",),
+    ),
+    ExpenseSource(
+        id="bofa_vwh_6484",
+        name="VWH - 6484",
+        data_type="transactions",
+        accounts=("VWH card ending 6484",),
+    ),
+    ExpenseSource(
+        id="bofa_seinom_6315",
+        name="Seinom LLC WD - 6315",
+        data_type="transactions",
+        accounts=("Seinom LLC WD card ending 6315",),
+    ),
+    ExpenseSource(
         id="capital_one",
         name="Capital One - 2391",
         data_type="transactions",
@@ -69,7 +93,7 @@ EXPENSE_SOURCES: tuple[ExpenseSource, ...] = (
     ),
     ExpenseSource(
         id="nordstrom",
-        name="Nordstrom - 5488",
+        name="Nordstrom",
         data_type="statements",
         accounts=("Nordstrom card ending 5488",),
     ),
