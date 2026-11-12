@@ -38,10 +38,34 @@ EXPENSE_SOURCES: tuple[ExpenseSource, ...] = (
         accounts=("Citi AAdvantage card ending 7690",),
     ),
     ExpenseSource(
+        id="citi_platinum",
+        name="Citibank Platinum CC",
+        data_type="transactions",
+        accounts=("Citi AAdvantage Platinum card ending 3590",),
+    ),
+    ExpenseSource(
         id="bofa",
         name="Bank of America CC",
         data_type="transactions",
         accounts=("Bank of America card ending 5225",),
+    ),
+    ExpenseSource(
+        id="capital_one",
+        name="Capital One CC",
+        data_type="transactions",
+        accounts=("Capital One card ending 2391",),
+    ),
+    ExpenseSource(
+        id="amex_gold",
+        name="Amex Business Gold CC",
+        data_type="transactions",
+        accounts=("Amex Business Gold card ending 2003",),
+    ),
+    ExpenseSource(
+        id="morgan_stanley",
+        name="Morgan Stanley CC",
+        data_type="transactions",
+        accounts=("Morgan Stanley card ending 3008",),
     ),
     ExpenseSource(
         id="nordstrom",

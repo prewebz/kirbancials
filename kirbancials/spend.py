@@ -37,7 +37,7 @@ def is_card_payment(
 
     Only negative amounts can be payments. A payment is a negative row whose
     category looks like a loan payment or a transfer, or whose merchant or
-    description contains PAYMENT, AUTOPAY, or AUTO PAY.
+    description contains PAYMENT, PYMT, AUTOPAY, or AUTO PAY.
     """
     number = _as_float(amount)
     if number is None or number >= 0:
@@ -46,7 +46,7 @@ def is_card_payment(
     if any(phrase in category_text for phrase in _CATEGORY_PHRASES):
         return True
     blob = f"{_text(merchant)} {_text(description)}".upper()
-    return "PAYMENT" in blob or "AUTOPAY" in blob or "AUTO PAY" in blob
+    return any(token in blob for token in ("PAYMENT", "PYMT", "AUTOPAY", "AUTO PAY"))
 
 
 @dataclass(frozen=True)

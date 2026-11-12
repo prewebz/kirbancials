@@ -25,6 +25,10 @@ class PaymentTests(unittest.TestCase):
         self.assertTrue(is_card_payment(-30, "Loan Payments", "Sample Bank", "loan"))
         self.assertTrue(is_card_payment(-10, "Transfer Out", "Sample Transfer", ""))
         self.assertTrue(is_card_payment(-10, "Transfer In", "Inbound", ""))
+        self.assertTrue(is_card_payment(-80, "Payment", "CAPITAL ONE MOBILE PYMT", ""))
+        self.assertTrue(is_card_payment(-80, "", "PAYMENT - THANK YOU", ""))
+        self.assertTrue(is_card_payment(-80, "", "ONLINE PAYMENT - THANK YOU", ""))
+        self.assertTrue(is_card_payment(-80, "", "AUTOPAY PAYMENT", "amex"))
 
     def test_charges_and_refunds_are_not_payments(self) -> None:
         self.assertFalse(is_card_payment(100, "Groceries", "Sample Grocery", "groceries"))
@@ -82,7 +86,23 @@ class PeriodTests(unittest.TestCase):
 
 class BofaSourceTests(unittest.TestCase):
     def test_registry_order_and_account_match(self) -> None:
-        self.assertEqual([source.id for source in EXPENSE_SOURCES], ["citi", "bofa", "nordstrom"])
+        self.assertEqual(
+            [source.id for source in EXPENSE_SOURCES],
+            ["citi", "citi_platinum", "bofa", "capital_one", "amex_gold", "morgan_stanley", "nordstrom"],
+        )
+        expected_accounts = {
+            "citi_platinum": "Citi AAdvantage Platinum card ending 3590",
+            "capital_one": "Capital One card ending 2391",
+            "amex_gold": "Amex Business Gold card ending 2003",
+            "morgan_stanley": "Morgan Stanley card ending 3008",
+        }
+        for source_id, account in expected_accounts.items():
+            registered = expense_source_by_id(source_id)
+            self.assertIsNotNone(registered)
+            assert registered is not None
+            self.assertEqual(registered.data_type, "transactions")
+            self.assertEqual(registered.accounts, (account,))
+            self.assertIs(expense_source_for_account(account), registered)
         source = expense_source_by_id("bofa")
         self.assertIsNotNone(source)
         assert source is not None
@@ -136,7 +156,18 @@ class BofaSourceTests(unittest.TestCase):
         )
         lines = expense_lines(transactions, pd.DataFrame(), resolve_period("this-month", TODAY))
         ordered = [line.name for line in lines]
-        self.assertEqual(ordered[:3], ["Citibank CC", "Bank of America CC", "Nordstrom CC"])
+        self.assertEqual(
+            ordered[:7],
+            [
+                "Citibank CC",
+                "Citibank Platinum CC",
+                "Bank of America CC",
+                "Capital One CC",
+                "Amex Business Gold CC",
+                "Morgan Stanley CC",
+                "Nordstrom CC",
+            ],
+        )
         bofa = next(line for line in lines if line.source_id == "bofa")
         self.assertEqual(bofa.total, 110)
         self.assertEqual(bofa.pending_charges, 1)
