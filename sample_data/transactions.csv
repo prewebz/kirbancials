@@ -1,10 +1,13 @@
 Transaction ID,Date,Account,Merchant,Description,Amount,Pending,Category
-txn-1001,2026-11-01,Nordstrom card ending 5488,Sample Grocery,weekly groceries,100,false,Groceries
-txn-1002,2026-11-03,Nordstrom card ending 5488,Sample Transit,commute,40,false,Transport
-txn-1003,2026-11-02,Nordstrom card ending 5488,Sample Cafe,coffee hold,20,true,Food
-txn-1003,2026-11-02,Nordstrom card ending 5488,Sample Cafe,coffee posted,25,false,Food
-txn-1004,2026-11-05,Nordstrom card ending 5488,Sample Payment,payment thank you,-200,false,Payment
-txn-1005,2026-11-10,Nordstrom card ending 5488,Sample Bookstore,pending book,15,true,Shopping
-txn-2001,2026-11-08,Sample card ending 0000,Sample Bookstore,paperback,30,false,Shopping
-txn-2002,2026-11-11,Sample card ending 0000,Sample Shop,pending hold,10,true,Shopping
-txn-1006,2026-10-15,Nordstrom card ending 5488,Sample October Store,last month,50,false,Shopping
+txn-c1,2026-11-01,Citi AAdvantage card ending 7690,Sample Grocery,groceries,100,false,Groceries
+txn-c2,2026-11-03,Citi AAdvantage card ending 7690,Sample Store,goods,40,false,Shopping
+txn-c3,2026-11-04,Citi AAdvantage card ending 7690,Sample Return,refund,-15,false,Shopping
+txn-c4,2026-11-05,Citi AAdvantage card ending 7690,PAYMENT THANK YOU,thank you,-200,false,Payment
+txn-c5,2026-11-06,Citi AAdvantage card ending 7690,AUTOPAY,citi autopay,-50,false,Transfer
+txn-c6,2026-11-07,Citi AAdvantage card ending 7690,Sample Bank,loan,-30,false,Loan Payments
+txn-c7,2026-11-08,Citi AAdvantage card ending 7690,Sample Transfer,move,-10,false,Transfer Out
+txn-c8,2026-11-10,Citi AAdvantage card ending 7690,Sample Bookstore,pending book,15,true,Shopping
+txn-c9,2026-10-31,Citi AAdvantage card ending 7690,Sample October Store,month boundary,80,false,Shopping
+txn-c10,2026-10-01,Citi AAdvantage card ending 7690,Sample Early October,first of last month,20,false,Groceries
+txn-u1,2026-11-08,Sample card ending 0000,Sample Shop,item,30,false,Shopping
+txn-u2,2026-11-11,Sample card ending 0000,Sample Shop,hold,10,true,Shopping

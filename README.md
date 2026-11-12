@@ -2,7 +2,9 @@
 
 Personal finance dashboard for credit card statement summaries and other expenses. It is a [Streamlit](https://streamlit.io/) app meant to run as a free Python web service on [Render](https://render.com/).
 
-The app has two tabs. **Daily spending** is the default: current balances, month-to-date charges, a daily spend table, and the transaction list. **Monthly statements** keeps the statement summary. The only card name shipped in code is the default used when a row has no `Account` value: `Nordstrom card ending 5488`. More cards are additional rows. See [Adding sources](#adding-sources).
+After login the landing page is **Profit & Loss**. It totals income (none connected yet) and expenses for a period you pick. Each expense name links to that source. **Daily spending** and **Monthly statements** stay available from the sidebar.
+
+Expense sources are registered in `kirbancials/sources.py`. Citibank CC reads transactions for `Citi AAdvantage card ending 7690`. Nordstrom CC reads statement months for `Nordstrom card ending 5488`. Any other Account in the data is still listed under its own name. See [Adding sources](#adding-sources).
 
 Real statements and transactions never belong in git. The repository includes only fake round numbers under `sample_data/` for local development.
 
@@ -33,7 +35,7 @@ On each run the app picks the first source that exists:
 3. `FINANCE_DATA_PATH` — path to a CSV on the machine running the app. Useful locally. Render's disk is ephemeral, so this is not how production data should be stored.
 4. `sample_data/example_statements.csv` — fake sample. A banner says so.
 
-The statement CSV upload on the Monthly statements tab replaces that choice for the current session only. The file is not written to disk and is not committed.
+The statement CSV upload on the Monthly statements page replaces that choice for the current session only. The file is not written to disk and is not committed.
 
 `.gitignore` ignores `*.csv` except `sample_data/`, plus `*.xlsx`, `*.xls`, `*.gz`, `.streamlit/secrets.toml`, and `data/`.
 
@@ -76,25 +78,23 @@ Amount sign: positive is a charge, negative is a payment, refund, or credit. Row
 
 One row is kept per account, the row with the latest `As Of`.
 
-## What the tabs show
+## Profit & Loss
 
-**Daily spending**
+The period choices are This month (the default), Last month, Year to date, Last 12 months, and All time. The exact dates are shown under the selector. This month, year to date, and the last 12 months end today. Last month is the previous calendar month, from the 1st through the last day. The last 12 months start the day after the same date a year ago.
 
-- Balances, one row per account, with the as-of time
-- Month-to-date spend per account (charges only, pending included and shown in its own column)
-- Daily spend for the selected account in the current month, plus one bar chart of those days
-- Transactions, newest first: date, account, merchant, amount, pending, category
-- Filters: account, date range, and a checkbox to hide payments and credits
+Income has no sources yet, so the page shows "No income sources connected yet" and total income `$0.00`. Add a future source by appending an `IncomeSource` in `kirbancials/sources.py` and teaching `income_for_source` how to read it.
 
-**Monthly statements**
+Expenses are one row per source: description, total spend, and data through. Total spend links to `?source=<id>` on the source detail page. The period is carried in the same query string. Logging in once covers every page in the session.
 
-- Latest statement balance, total net spend, total payments, interest + fees
-- Statement balance by month (the only chart on this tab)
-- Year, account, and source-kind filters
-- Monthly detail
-- Period totals, in an expander
+Transaction sources (Citibank) sum charges and subtract refunds. Pending charges are included. A negative row is a card payment, and is left out, when its category looks like `Loan Payments`, `Transfer In`, or `Transfer Out`, or when the merchant or description contains `PAYMENT`, `AUTOPAY`, or `AUTO PAY`. That rule is `is_card_payment` in `kirbancials/spend.py`.
 
-Income rows are excluded from the spend totals. When any are present, an Income figure is added. Spend totals include credit card and expense rows.
+Statement sources (Nordstrom) sum `Net Spend` plus interest and fees for months whose statement closing date falls in the period. If the closing date is blank, the first day of `Month` is used so the row is not dropped. Quarter and year total rows are not added again.
+
+Net profit / (loss) is total income minus total expenses. A loss is shown as `-$1,234.56`.
+
+`python -m unittest tests.test_pnl` checks the payment rule, month boundaries, and the sample totals.
+
+Daily spending and Monthly statements are unchanged secondary pages.
 
 Amounts are shown as stored. Negatives render as `-$1,234.56`.
 
@@ -123,7 +123,7 @@ Amounts are shown as stored. Negatives render as `-$1,234.56`.
 
 ## Adding sources
 
-- Another card: add statement rows, transaction rows, and a balance row with the same `Account` value. Leave `Source Kind` blank or set `credit_card`.
+- Another card: add one `ExpenseSource` in `kirbancials/sources.py` (`id`, display name, `transactions` or `statements`, and the Account values it owns), then put those Account values in the CSV. Accounts that are not listed still show up on Profit & Loss under their raw name.
 - Other expenses: set `Source Kind` to `expense`. Statement-only columns can be left blank.
 - Income later: set `Source Kind` to `income` and put the amount in `Income` (or in `Net Spend` if that column is the amount). No dashboard rewrite is required.
 - A new kind with its own total rules: add one `SourceKind` entry in `kirbancials/schema.py`.
