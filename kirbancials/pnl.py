@@ -7,9 +7,10 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from kirbancials.activity import load_transactions, resolve_transactions
+from kirbancials.activity import load_balances, load_transactions, resolve_balances, resolve_transactions
 from kirbancials.data import FinanceDataError, load_dataset, resolve_origin
 from kirbancials.formatting import format_money, show_money_table
+from kirbancials.loans import estimated_daily_interest, estimated_monthly_interest, loan_payment_table
 from kirbancials.periods import PERIOD_KEYS, PERIOD_LABELS, Period, format_period, period_choice, resolve_period
 from kirbancials.sources import INCOME_SOURCES
 from kirbancials.spend import ExpenseLine, caveats, expense_lines, line_for_source_id, rows_for_line, total_income
@@ -19,7 +20,7 @@ HOME_PAGE = "views/profit_and_loss.py"
 
 
 def render_profit_and_loss() -> None:
-    transactions, monthly, sample, errors = _load()
+    transactions, monthly, balances, sample, errors = _load()
     for message in errors:
         st.error(message)
     if sample:
@@ -27,7 +28,7 @@ def render_profit_and_loss() -> None:
 
     period = _period_selector()
     income = total_income()
-    lines = expense_lines(transactions, monthly, period)
+    lines = expense_lines(transactions, monthly, period, balances)
     expenses = sum(line.total for line in lines)
 
     st.subheader("Income")
@@ -39,7 +40,17 @@ def render_profit_and_loss() -> None:
     st.write(f"Total income {format_money(income)}")
 
     st.subheader("Expenses")
-    _expense_table(lines, expenses, period)
+    card_lines = [line for line in lines if line.data_type != "loan"]
+    loan_lines = [line for line in lines if line.data_type == "loan"]
+    _expense_rows(card_lines, period)
+    if loan_lines:
+        st.markdown("**Loan interest**")
+        st.caption("Interest estimated from current balance and APR.")
+        _expense_rows(loan_lines, period)
+    total = st.columns([3, 2, 2])
+    total[0].markdown("**Total expenses**")
+    total[1].markdown(f"**{format_money(expenses)}**")
+    total[2].write("")
     for note in caveats(lines):
         st.caption(note)
 
@@ -59,14 +70,14 @@ def render_source_detail() -> None:
         _back_link(_period_selector())
         return
 
-    transactions, monthly, sample, errors = _load()
+    transactions, monthly, balances, sample, errors = _load()
     for message in errors:
         st.error(message)
     if sample:
         st.warning("Showing bundled sample data. These are fake round numbers, not your accounts.")
 
     period = _period_selector()
-    line = line_for_source_id(source_id, transactions, monthly, period)
+    line = line_for_source_id(source_id, transactions, monthly, period, balances)
     if line is None:
         st.write("That expense source was not found.")
         _back_link(period)
@@ -74,6 +85,9 @@ def render_source_detail() -> None:
 
     st.subheader(line.name)
     _back_link(period)
+    if line.data_type == "loan":
+        _render_loan_detail(line, transactions, period)
+        return
     st.write(f"Total spend {format_money(line.total)}")
     if line.data_through is not None:
         st.caption(f"Data through {line.data_through.isoformat()}")
@@ -125,31 +139,65 @@ def _period_selector() -> Period:
     return period
 
 
-def _expense_table(lines: list[ExpenseLine], expenses: float, period: Period) -> None:
+def _expense_rows(lines: list[ExpenseLine], period: Period) -> None:
+    if not lines:
+        return
     header = st.columns([3, 2, 2])
     header[0].markdown("**Expense description**")
     header[1].markdown("**Total spend**")
     header[2].markdown("**Data through**")
     for line in lines:
         row = st.columns([3, 2, 2])
+        label = loan_label_for(line)
         row[0].page_link(
             DETAIL_PAGE,
-            label=line.name,
+            label=label,
             query_params={"source": line.source_id, "period": period.key},
         )
         row[1].write(format_money(line.total))
         row[2].write(line.data_through.isoformat() if line.data_through else "—")
-    total = st.columns([3, 2, 2])
-    total[0].markdown("**Total expenses**")
-    total[1].markdown(f"**{format_money(expenses)}**")
-    total[2].write("")
+
+
+def loan_label_for(line: ExpenseLine) -> str:
+    if line.data_type == "loan" and line.apr is not None:
+        return f"{line.name} ({line.apr:.2f}% APR)"
+    return line.name
+
+
+def _render_loan_detail(line: ExpenseLine, transactions: pd.DataFrame, period: Period) -> None:
+    st.write(f"APR {line.apr:.2f}%" if line.apr is not None else "APR")
+    if line.balance_missing or line.balance is None:
+        st.caption(f"{line.name} balance is missing, so interest is $0.")
+        st.write(f"Current balance {format_money(None)}")
+    else:
+        st.write(f"Current balance {format_money(line.balance)}")
+        st.write(f"Estimated monthly interest {format_money(estimated_monthly_interest(line.balance, line.apr or 0))}")
+        st.write(f"Estimated daily interest {format_money(estimated_daily_interest(line.balance, line.apr or 0))}")
+    st.caption("Interest estimated from current balance and APR.")
+    st.write(f"Estimated interest this period {format_money(line.total)}")
+    account = _loan_account(line)
+    payments = loan_payment_table(transactions, account, period) if account else pd.DataFrame()
+    st.subheader("Payments")
+    if payments.empty:
+        st.info("No loan payments in this period.")
+        return
+    show_money_table(payments, ["Amount"])
+
+
+def _loan_account(line: ExpenseLine) -> str:
+    from kirbancials.sources import expense_source_by_id
+
+    source = expense_source_by_id(line.source_id)
+    if source is None or not source.accounts:
+        return ""
+    return source.accounts[0]
 
 
 def _back_link(period: Period) -> None:
     st.page_link(HOME_PAGE, label="Back to Profit & Loss", query_params={"period": period.key})
 
 
-def _load() -> tuple[pd.DataFrame, pd.DataFrame, bool, list[str]]:
+def _load() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bool, list[str]]:
     errors: list[str] = []
     sample = False
     try:
@@ -167,7 +215,14 @@ def _load() -> tuple[pd.DataFrame, pd.DataFrame, bool, list[str]]:
     except FinanceDataError as exc:
         errors.append(str(exc))
         monthly = pd.DataFrame()
-    return txn_rows, monthly, sample, errors
+    try:
+        balances = load_balances(resolve_balances())
+        sample = sample or balances.is_sample
+        balance_rows = balances.rows
+    except FinanceDataError as exc:
+        errors.append(str(exc))
+        balance_rows = pd.DataFrame()
+    return txn_rows, monthly, balance_rows, sample, errors
 
 
 def _transaction_table(frame: pd.DataFrame) -> pd.DataFrame:

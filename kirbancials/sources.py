@@ -14,8 +14,9 @@ from dataclasses import dataclass
 class ExpenseSource:
     id: str
     name: str
-    data_type: str  # "transactions" or "statements"
+    data_type: str  # "transactions", "statements", or "loan"
     accounts: tuple[str, ...]
+    apr: float | None = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,34 @@ EXPENSE_SOURCES: tuple[ExpenseSource, ...] = (
         data_type="statements",
         accounts=("Nordstrom card ending 5488",),
     ),
+    ExpenseSource(
+        id="wf_auto_7635",
+        name="Wells Fargo Auto - 7635",
+        data_type="loan",
+        accounts=("Wells Fargo Auto Loan ending 7635",),
+        apr=7.49,
+    ),
+    ExpenseSource(
+        id="wf_auto_8492",
+        name="Wells Fargo Auto - 8492",
+        data_type="loan",
+        accounts=("Wells Fargo Auto Loan ending 8492",),
+        apr=4.90,
+    ),
+    ExpenseSource(
+        id="truist_auto_1001",
+        name="Truist Auto - 1001",
+        data_type="loan",
+        accounts=("Truist Auto Loan ending 1001",),
+        apr=7.56,
+    ),
+    ExpenseSource(
+        id="jeep_0001",
+        name="Stellantis Jeep - 0001",
+        data_type="loan",
+        accounts=("Stellantis Jeep Loan ending 0001",),
+        apr=5.99,
+    ),
 )
 
 INCOME_SOURCES: tuple[IncomeSource, ...] = ()
@@ -116,6 +145,14 @@ def expense_source_for_account(account: str) -> ExpenseSource | None:
         if account in source.accounts:
             return source
     return None
+
+
+def loan_accounts() -> set[str]:
+    names: set[str] = set()
+    for source in EXPENSE_SOURCES:
+        if source.data_type == "loan":
+            names.update(source.accounts)
+    return names
 
 
 def mapped_accounts() -> set[str]:

@@ -90,6 +90,8 @@ Transaction sources (such as Citibank - 7690) sum charges and subtract refunds. 
 
 Statement sources (Nordstrom) sum `Net Spend` plus interest and fees for months whose statement closing date falls in the period. If the closing date is blank, the first day of `Month` is used so the row is not dropped. Quarter and year total rows are not added again.
 
+Auto loans are listed after the cards. Their rows are estimated interest: current balance times APR divided by 365, times the number of days in the period. Loan payments in the transaction file are not spend. A missing balance shows `$0` and a note. The detail page shows the APR, balance, monthly and daily estimates, and the payment table.
+
 Net profit / (loss) is total income minus total expenses. A loss is shown as `-$1,234.56`.
 
 `python -m unittest tests.test_pnl` checks the payment rule, month boundaries, and the sample totals.

@@ -42,6 +42,7 @@ from kirbancials.data import (
     summarize,
 )
 from kirbancials.formatting import format_money, show_money_table
+from kirbancials.sources import loan_accounts
 from kirbancials.schema import (
     ACCOUNT_COL,
     INCOME_COL,
@@ -164,7 +165,14 @@ def _render_daily(transactions, balances, txn_error, bal_error) -> None:
     else:
         show_money_table(_money_table(spend), ["Month-to-date spend", "Pending charges"])
 
-    accounts = sorted(transactions.rows[TXN_ACCOUNT].unique().tolist())
+    accounts = sorted(
+        account
+        for account in transactions.rows[TXN_ACCOUNT].dropna().astype(str).unique().tolist()
+        if account not in loan_accounts()
+    )
+    if not accounts:
+        st.info("No card charges in this filter.")
+        return
     selected = _select_value("Account", [ALL_ACCOUNTS, *accounts], key="txn_account", fallback=accounts[0])
     daily = daily_charges(transactions.rows, selected, today)
     st.subheader("Daily spend")

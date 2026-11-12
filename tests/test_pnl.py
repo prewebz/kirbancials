@@ -171,6 +171,10 @@ class BofaSourceTests(unittest.TestCase):
                 "amex_gold",
                 "morgan_stanley",
                 "nordstrom",
+                "wf_auto_7635",
+                "wf_auto_8492",
+                "truist_auto_1001",
+                "jeep_0001",
             ],
         )
         expected_accounts = {
@@ -244,7 +248,7 @@ class BofaSourceTests(unittest.TestCase):
         lines = expense_lines(transactions, pd.DataFrame(), resolve_period("this-month", TODAY))
         ordered = [line.name for line in lines]
         self.assertEqual(
-            ordered[:11],
+            ordered,
             [
                 "Citibank - 7690",
                 "Citibank Platinum - 3590",
@@ -257,6 +261,10 @@ class BofaSourceTests(unittest.TestCase):
                 "Amex Business Gold - 2003",
                 "Morgan Stanley - 3008",
                 "Nordstrom - 5488",
+                "Wells Fargo Auto - 7635",
+                "Wells Fargo Auto - 8492",
+                "Truist Auto - 1001",
+                "Stellantis Jeep - 0001",
             ],
         )
         bofa = next(line for line in lines if line.source_id == "bofa")
@@ -308,6 +316,98 @@ class SamplePnlTests(unittest.TestCase):
         self.assertEqual(all_by_name["Nordstrom - 5488"].interest, 100)
         self.assertEqual(all_by_name["Nordstrom - 5488"].fees, 100)
         self.assertEqual(all_by_name["Sample household expenses"].total, 700)
+
+
+class LoanInterestTests(unittest.TestCase):
+    def test_interest_uses_balance_apr_and_elapsed_days(self) -> None:
+        from kirbancials.loans import (
+            elapsed_days,
+            estimated_daily_interest,
+            estimated_interest,
+            estimated_monthly_interest,
+        )
+        from kirbancials.pnl import loan_label_for
+
+        this_month = resolve_period("this-month", TODAY)
+        last_month = resolve_period("last-month", TODAY)
+        self.assertEqual(elapsed_days(this_month), 12)
+        self.assertEqual(elapsed_days(last_month), 31)
+        self.assertIsNone(elapsed_days(resolve_period("all-time", TODAY)))
+        balance = 10000.0
+        apr = 7.49
+        self.assertAlmostEqual(estimated_interest(balance, apr, 12), balance * apr / 100 / 365 * 12)
+        self.assertAlmostEqual(estimated_interest(balance, apr, 31), balance * apr / 100 / 365 * 31)
+        self.assertEqual(estimated_interest(None, apr, 12), 0.0)
+        self.assertAlmostEqual(estimated_monthly_interest(balance, apr), balance * apr / 100 / 12)
+        self.assertAlmostEqual(estimated_daily_interest(balance, apr), balance * apr / 100 / 365)
+
+        account = "Wells Fargo Auto Loan ending 7635"
+        transactions = pd.DataFrame(
+            [
+                {
+                    "Account": "Citi AAdvantage card ending 7690",
+                    "Date": pd.Timestamp("2026-11-02"),
+                    "Amount": 100,
+                    "Pending": False,
+                    "Category": "Shopping",
+                    "Merchant": "Sample Store",
+                    "Description": "goods",
+                },
+                {
+                    "Account": account,
+                    "Date": pd.Timestamp("2026-11-03"),
+                    "Amount": -400,
+                    "Pending": False,
+                    "Category": "Loan Payments",
+                    "Merchant": "WELLS FARGO",
+                    "Description": "AUTO PAY",
+                },
+                {
+                    "Account": account,
+                    "Date": pd.Timestamp("2026-11-08"),
+                    "Amount": 999,
+                    "Pending": False,
+                    "Category": "Shopping",
+                    "Merchant": "US TREAS TAX PYMT",
+                    "Description": "not a card charge",
+                },
+            ]
+        )
+        balances = pd.DataFrame(
+            {
+                "Account": [account],
+                "As Of": ["2026-11-12T08:00:00Z"],
+                "Current Balance": [balance],
+            }
+        )
+        lines = expense_lines(transactions, pd.DataFrame(), this_month, balances)
+        by_id = {line.source_id: line for line in lines}
+        self.assertEqual(by_id["citi"].total, 100)
+        self.assertAlmostEqual(by_id["wf_auto_7635"].total, estimated_interest(balance, apr, 12))
+        self.assertEqual(by_id["wf_auto_7635"].data_through, date(2026, 11, 12))
+        self.assertFalse(any(line.source_id.startswith("account:") for line in lines))
+        self.assertEqual(loan_label_for(by_id["wf_auto_7635"]), "Wells Fargo Auto - 7635 (7.49% APR)")
+        self.assertEqual(
+            [line.source_id for line in lines if line.data_type == "loan"],
+            ["wf_auto_7635", "wf_auto_8492", "truist_auto_1001", "jeep_0001"],
+        )
+
+        missing = expense_lines(transactions, pd.DataFrame(), this_month, pd.DataFrame())
+        missing_loan = next(line for line in missing if line.source_id == "wf_auto_7635")
+        self.assertEqual(missing_loan.total, 0)
+        self.assertTrue(missing_loan.balance_missing)
+        self.assertIn("Wells Fargo Auto - 7635 balance is missing, so interest is $0.", caveats(missing))
+
+        from kirbancials.activity import month_to_date_spend
+        from kirbancials.loans import loan_payment_table
+
+        spend = month_to_date_spend(transactions, TODAY)
+        self.assertNotIn(account, set(spend["Account"]))
+        self.assertIn("Citi AAdvantage card ending 7690", set(spend["Account"]))
+        payments = loan_payment_table(transactions, account, this_month)
+        self.assertTrue(pd.api.types.is_numeric_dtype(payments["Amount"]))
+        self.assertEqual(payments["Date"].tolist(), ["2026-11-08", "2026-11-03"])
+        self.assertEqual(payments["Amount"].tolist(), [999, -400])
 
 
 if __name__ == "__main__":

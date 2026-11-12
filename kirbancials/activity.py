@@ -29,6 +29,7 @@ import pandas as pd
 
 from kirbancials.data import DataOrigin, FinanceDataError
 from kirbancials.schema import DEFAULT_ACCOUNT
+from kirbancials.sources import loan_accounts
 
 RENDER_TRANSACTIONS_CSV = Path("/etc/secrets/transactions.csv")
 SAMPLE_TRANSACTIONS = (
@@ -182,7 +183,7 @@ def month_to_date_spend(rows: pd.DataFrame, today: date) -> pd.DataFrame:
     Pending charges are included in the spend total and also reported on their own.
     """
     columns = ["Account", "Month-to-date spend", "Pending charges"]
-    month = _in_month(rows, today)
+    month = _in_month(_without_loans(rows), today)
     if month.empty:
         return pd.DataFrame(columns=columns)
     charges = month[month[TXN_AMOUNT] > 0]
@@ -201,7 +202,7 @@ def month_to_date_spend(rows: pd.DataFrame, today: date) -> pd.DataFrame:
 def daily_charges(rows: pd.DataFrame, account: str, today: date) -> pd.DataFrame:
     """One row per day of charges in the current month for the selected account."""
     columns = ["Date", "Total charges"]
-    month = _in_month(rows, today)
+    month = _in_month(_without_loans(rows), today)
     if account != ALL_ACCOUNTS:
         month = month[month[TXN_ACCOUNT] == account]
     charges = month[month[TXN_AMOUNT] > 0]
@@ -220,7 +221,7 @@ def filter_transactions(
     end: date | None,
     hide_credits: bool,
 ) -> pd.DataFrame:
-    out = rows
+    out = _without_loans(rows)
     if account != ALL_ACCOUNTS:
         out = out[out[TXN_ACCOUNT] == account]
     if start is not None and end is not None and not out.empty:
@@ -231,6 +232,12 @@ def filter_transactions(
     if out.empty:
         return out
     return out.sort_values([TXN_DATE, TXN_ACCOUNT, TXN_MERCHANT], ascending=[False, True, True], kind="mergesort")
+
+
+def _without_loans(rows: pd.DataFrame) -> pd.DataFrame:
+    if rows.empty or TXN_ACCOUNT not in rows.columns:
+        return rows
+    return rows.loc[~rows[TXN_ACCOUNT].isin(loan_accounts())].copy()
 
 
 def format_synced(stamp: pd.Timestamp | None) -> str | None:

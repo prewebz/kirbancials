@@ -13,6 +13,7 @@ from datetime import date
 
 import pandas as pd
 
+from kirbancials.loans import current_balance, elapsed_days, estimated_interest
 from kirbancials.periods import Period
 from kirbancials.sources import (
     EXPENSE_SOURCES,
@@ -20,6 +21,7 @@ from kirbancials.sources import (
     ExpenseSource,
     account_from_unmapped_id,
     expense_source_by_id,
+    loan_accounts,
     mapped_accounts,
     unmapped_source_id,
 )
@@ -67,15 +69,23 @@ class ExpenseLine:
     interest: float
     fees: float
     latest_closing: date | None
+    apr: float | None = None
+    balance: float | None = None
+    balance_missing: bool = False
+    elapsed_days: int | None = None
 
 
 def expense_lines(
     transactions: pd.DataFrame,
     monthly: pd.DataFrame,
     period: Period,
+    balances: pd.DataFrame | None = None,
 ) -> list[ExpenseLine]:
     """Registry sources first, then unmapped accounts that have rows in the period."""
-    lines = [line_for_source(source, transactions, monthly, period) for source in EXPENSE_SOURCES]
+    lines = [
+        line_for_source(source, transactions, monthly, period, balances)
+        for source in EXPENSE_SOURCES
+    ]
     claimed = mapped_accounts()
     txn_accounts = _accounts(transactions, "Account") - claimed
     statement_accounts = _accounts(monthly, "Account") - claimed - txn_accounts
@@ -95,10 +105,11 @@ def line_for_source_id(
     transactions: pd.DataFrame,
     monthly: pd.DataFrame,
     period: Period,
+    balances: pd.DataFrame | None = None,
 ) -> ExpenseLine | None:
     source = expense_source_by_id(source_id)
     if source is not None:
-        return line_for_source(source, transactions, monthly, period)
+        return line_for_source(source, transactions, monthly, period, balances)
     account = account_from_unmapped_id(source_id)
     if account is None or expense_source_for_guard(account):
         return None
@@ -118,7 +129,10 @@ def line_for_source(
     transactions: pd.DataFrame,
     monthly: pd.DataFrame,
     period: Period,
+    balances: pd.DataFrame | None = None,
 ) -> ExpenseLine:
+    if source.data_type == "loan":
+        return _loan_line(source, period, balances)
     if source.data_type == "statements":
         return _statement_line(source.name, source.accounts, monthly, period, source.id)
     return _transaction_line(source.name, source.accounts, transactions, period, source.id)
@@ -137,7 +151,10 @@ def rows_for_line(
         dates = _statement_dates(rows)
         mask = dates.map(lambda value: period.contains(_as_date(value)))
         return rows.loc[mask].copy(), rows.iloc[0:0]
-    rows = _transaction_rows(transactions, accounts)
+    if line.data_type == "loan":
+        empty = transactions.iloc[0:0]
+        return empty, empty
+    rows = _drop_loan_accounts(_transaction_rows(transactions, accounts))
     dates = rows["Date"].map(_as_date) if not rows.empty else pd.Series(dtype=object)
     in_period = rows.loc[dates.map(period.contains)] if not rows.empty else rows
     if in_period.empty:
@@ -159,6 +176,10 @@ def caveats(lines: list[ExpenseLine]) -> list[str]:
             notes.append(
                 f"{line.name} from monthly statements, latest statement closed {line.latest_closing.isoformat()}."
             )
+        if line.data_type == "loan" and line.balance_missing:
+            notes.append(f"{line.name} balance is missing, so interest is $0.")
+        elif line.data_type == "loan" and line.elapsed_days is None:
+            notes.append(f"{line.name} interest is not estimated because the period has no fixed length.")
     return notes
 
 
@@ -173,6 +194,33 @@ def income_for_source(source_id: str) -> float:
     return 0.0
 
 
+def _loan_line(
+    source: ExpenseSource,
+    period: Period,
+    balances: pd.DataFrame | None,
+) -> ExpenseLine:
+    account = source.accounts[0]
+    apr = source.apr if source.apr is not None else 0.0
+    balance, as_of = current_balance(balances, account)
+    days = elapsed_days(period)
+    missing = balance is None
+    return ExpenseLine(
+        source_id=source.id,
+        name=source.name,
+        data_type="loan",
+        total=estimated_interest(balance, apr, days),
+        data_through=as_of,
+        pending_charges=0,
+        interest=estimated_interest(balance, apr, days),
+        fees=0.0,
+        latest_closing=None,
+        apr=source.apr,
+        balance=balance,
+        balance_missing=missing,
+        elapsed_days=days,
+    )
+
+
 def _transaction_line(
     name: str,
     accounts: str | tuple[str, ...],
@@ -181,6 +229,7 @@ def _transaction_line(
     source_id: str,
 ) -> ExpenseLine:
     rows = _transaction_rows(transactions, _as_account_tuple(accounts))
+    rows = _drop_loan_accounts(rows)
     if rows.empty:
         return _empty_line(source_id, name, "transactions")
     dates = rows["Date"].map(_as_date)
@@ -256,6 +305,12 @@ def _statement_rows(monthly: pd.DataFrame, accounts: tuple[str, ...]) -> pd.Data
     if monthly.empty or "Account" not in monthly.columns:
         return monthly.iloc[0:0]
     return monthly.loc[monthly["Account"].isin(accounts)].copy()
+
+
+def _drop_loan_accounts(rows: pd.DataFrame) -> pd.DataFrame:
+    if rows.empty or "Account" not in rows.columns:
+        return rows
+    return rows.loc[~rows["Account"].isin(loan_accounts())].copy()
 
 
 def _transaction_rows(transactions: pd.DataFrame, accounts: tuple[str, ...]) -> pd.DataFrame:
