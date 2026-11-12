@@ -1,0 +1,10 @@
+Transaction ID,Date,Account,Merchant,Description,Amount,Pending,Category
+txn-1001,2026-11-01,Nordstrom card ending 5488,Sample Grocery,weekly groceries,100,false,Groceries
+txn-1002,2026-11-03,Nordstrom card ending 5488,Sample Transit,commute,40,false,Transport
+txn-1003,2026-11-02,Nordstrom card ending 5488,Sample Cafe,coffee hold,20,true,Food
+txn-1003,2026-11-02,Nordstrom card ending 5488,Sample Cafe,coffee posted,25,false,Food
+txn-1004,2026-11-05,Nordstrom card ending 5488,Sample Payment,payment thank you,-200,false,Payment
+txn-1005,2026-11-10,Nordstrom card ending 5488,Sample Bookstore,pending book,15,true,Shopping
+txn-2001,2026-11-08,Sample card ending 0000,Sample Bookstore,paperback,30,false,Shopping
+txn-2002,2026-11-11,Sample card ending 0000,Sample Shop,pending hold,10,true,Shopping
+txn-1006,2026-10-15,Nordstrom card ending 5488,Sample October Store,last month,50,false,Shopping

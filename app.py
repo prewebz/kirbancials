@@ -1,24 +1,44 @@
 """Kirbancials finance dashboard.
 
 Login is required before any figures are shown. The password is APP_PASSWORD.
-Statement data is read from the environment, a Render secret file, a path, or
-the bundled fake sample. A sidebar upload overrides that choice for the
-session and is not stored.
+Daily spending is a plain stack of tables. Monthly statements keep the
+summary figures, one balance chart, the monthly table, and period totals.
 """
 
 from __future__ import annotations
 
 import hmac
 import os
+from datetime import date
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 
+from kirbancials.activity import (
+    ALL_ACCOUNTS,
+    BAL_ACCOUNT,
+    BAL_AS_OF,
+    BAL_AVAILABLE,
+    BAL_CURRENT,
+    BAL_LIMIT,
+    TXN_ACCOUNT,
+    TXN_AMOUNT,
+    TXN_CATEGORY,
+    TXN_DATE,
+    TXN_MERCHANT,
+    TXN_PENDING,
+    daily_charges,
+    filter_transactions,
+    format_synced,
+    load_balances,
+    load_transactions,
+    month_to_date_spend,
+    resolve_balances,
+    resolve_transactions,
+)
 from kirbancials.data import (
     FinanceDataError,
     balance_series,
-    charges_and_payments,
     filter_rows,
     load_dataset,
     resolve_origin,
@@ -53,6 +73,8 @@ DETAIL_COLUMNS = [
     "Payment Due Date",
 ]
 
+BALANCE_MONEY = [BAL_CURRENT, BAL_AVAILABLE, BAL_LIMIT]
+
 
 def password_matches(provided: str, expected: str) -> bool:
     return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
@@ -82,10 +104,10 @@ def require_login() -> None:
 
 
 def load_current_dataset():
-    uploaded = st.sidebar.file_uploader(
-        "CSV upload (this session only)",
+    uploaded = st.file_uploader(
+        "Statement CSV upload (this session only)",
         type=["csv"],
-        help="Replaces the configured source until you clear it or end the session. Nothing is written to disk.",
+        help="Replaces the configured statement file until you clear it or end the session. Nothing is written to disk.",
     )
     try:
         if uploaded is not None:
@@ -104,57 +126,143 @@ def load_current_dataset():
         st.stop()
 
 
+def load_activity():
+    txn_error = None
+    bal_error = None
+    try:
+        transactions = load_transactions(resolve_transactions())
+    except FinanceDataError as exc:
+        transactions = load_transactions(None)
+        txn_error = str(exc)
+    try:
+        balances = load_balances(resolve_balances())
+    except FinanceDataError as exc:
+        balances = load_balances(None)
+        bal_error = str(exc)
+    return transactions, balances, txn_error, bal_error
+
+
 def render_dashboard() -> None:
     with st.sidebar:
-        st.header("Kirbancials")
         if st.button("Log out"):
             st.session_state["authenticated"] = False
             st.rerun()
 
-    data = load_current_dataset()
+    transactions, balances, txn_error, bal_error = load_activity()
+    st.title("Kirbancials Finance Dashboard")
 
-    with st.sidebar:
+    daily, monthly = st.tabs(["Daily spending", "Monthly statements"])
+    with daily:
+        _render_daily(transactions, balances, txn_error, bal_error)
+    with monthly:
+        _render_monthly()
+
+
+def _render_daily(transactions, balances, txn_error, bal_error) -> None:
+    sample_bits = []
+    if transactions.is_sample:
+        sample_bits.append("transactions")
+    if balances.is_sample:
+        sample_bits.append("balances")
+    if sample_bits:
+        st.warning(
+            "Showing bundled sample "
+            + " and ".join(sample_bits)
+            + ". These are fake round numbers, not your cards."
+        )
+
+    if bal_error:
+        st.error(bal_error)
+    synced = format_synced(balances.last_synced)
+    if synced:
+        st.caption(f"Data last synced: {synced}")
+
+    st.subheader("Balances")
+    if balances.rows.empty:
+        st.info("No balance data yet.")
+    else:
+        st.dataframe(_balance_table(balances.rows), width="stretch", hide_index=True)
+
+    if txn_error:
+        st.error(txn_error)
+    if transactions.rows.empty:
+        if not txn_error:
+            st.info("No transaction data yet.")
+        return
+
+    today = date.today()
+    st.subheader("Month-to-date spend")
+    st.caption(
+        f"{today:%B %Y}. Charges only. Payments and credits are excluded. Pending charges are included."
+    )
+    spend = month_to_date_spend(transactions.rows, today)
+    if spend.empty:
+        st.info("No charges this month.")
+    else:
+        st.dataframe(
+            _money_table(spend, ["Month-to-date spend", "Pending charges"]),
+            width="stretch",
+            hide_index=True,
+        )
+
+    accounts = sorted(transactions.rows[TXN_ACCOUNT].unique().tolist())
+    selected = _select_value("Account", [ALL_ACCOUNTS, *accounts], key="txn_account", fallback=accounts[0])
+    daily = daily_charges(transactions.rows, selected, today)
+    st.subheader("Daily spend")
+    st.caption("Current month. Charges only.")
+    if daily.empty:
+        st.info("No charges this month for this account.")
+    else:
+        st.dataframe(_money_table(daily, ["Total charges"]), width="stretch", hide_index=True)
+        st.bar_chart(daily, x="Date", y="Total charges", x_label="Date", y_label="Total charges", sort=False)
+
+    st.subheader("Transactions")
+    dates = transactions.rows[TXN_DATE].dt.date
+    start_default = min(dates)
+    end_default = max(dates)
+    picked = st.date_input("Date range", value=(start_default, end_default), key="txn_range")
+    hide_credits = st.checkbox("Hide payments/credits", key="hide_credits")
+    start, end = _range_bounds(picked)
+    visible = filter_transactions(transactions.rows, selected, start, end, hide_credits)
+    if visible.empty:
+        st.info("No transactions in this filter.")
+        return
+    st.dataframe(_transaction_table(visible), width="stretch", hide_index=True)
+
+
+def _render_monthly() -> None:
+    data = load_current_dataset()
+    if data.is_sample:
+        st.warning(
+            "Showing bundled sample statements. These are fake round numbers, not your statements."
+        )
+    else:
         st.caption(f"Source: {data.source_label}")
-        accounts = data.accounts
-        kinds = data.kinds
-        selected_accounts = _multiselect("Accounts", accounts, key="accounts")
-        year_options = ["All", *sorted(data.years, reverse=True)]
-        selected_year = _select_value("Year", year_options, key="year", fallback="All")
-        if len(kinds) > 1:
-            selected_kinds = _multiselect(
-                "Source kinds",
-                kinds,
-                key="kinds",
-                format_func=lambda kind: kind_spec(kind).label,
-            )
-        else:
-            selected_kinds = kinds
+
+    accounts = data.accounts
+    kinds = data.kinds
+    selected_accounts = _multiselect("Accounts", accounts, key="accounts")
+    year_options = ["All", *sorted(data.years, reverse=True)]
+    selected_year = _select_value("Year", year_options, key="year", fallback="All")
+    if len(kinds) > 1:
+        selected_kinds = _multiselect(
+            "Source kinds",
+            kinds,
+            key="kinds",
+            format_func=lambda kind: kind_spec(kind).label,
+        )
+    else:
+        selected_kinds = kinds
 
     filtered = filter_rows(data, selected_accounts, selected_year, selected_kinds)
     snapshot = summarize(filtered.monthly)
-
-    st.title("Kirbancials Finance Dashboard")
-    st.caption("Credit card statements and other expenses.")
-    if data.is_sample:
-        st.warning(
-            "Showing bundled sample data. These are fake round numbers for local development, not real statements. "
-            "Set FINANCE_DATA_CSV, add the Render secret file statement_summary_combined.csv, "
-            "or set FINANCE_DATA_PATH to load your own CSV."
-        )
-
     _render_metrics(snapshot)
-    _render_charts(filtered.monthly)
+    _render_balance_chart(filtered.monthly)
     _render_monthly_table(filtered.monthly)
     _render_period_totals(filtered.period_totals)
 
 
 def _multiselect(label: str, options: list[str], key: str, format_func=None) -> list[str]:
-    """Keep a multiselect selection when the available options change.
-
-    A session CSV upload can replace the account list. Streamlit rejects a
-    stored selection that is not in the new options, so invalid entries are
-    dropped. If that removes every entry, select the new options.
-    """
     valid = set(options)
     if key not in st.session_state:
         st.session_state[key] = list(options)
@@ -169,6 +277,8 @@ def _multiselect(label: str, options: list[str], key: str, format_func=None) -> 
 
 
 def _select_value(label: str, options: list[str], key: str, fallback: str) -> str:
+    if not options:
+        return fallback
     if key not in st.session_state or st.session_state[key] not in options:
         st.session_state[key] = fallback if fallback in options else options[0]
     return st.selectbox(label, options, key=key)
@@ -192,54 +302,30 @@ def _render_metrics(snapshot) -> None:
         column.metric(label, format_money(value), help=help_text)
 
 
-def _render_charts(monthly: pd.DataFrame) -> None:
-    balance, bars = st.columns(2)
-    with balance:
-        st.subheader("Statement balance by month")
-        series = balance_series(monthly)
-        if series.empty:
-            st.info("No credit card statement balances in this filter.")
-        else:
-            encoding = {
-                "x": alt.X("Date:T", title="Month", axis=alt.Axis(format="%b %Y")),
-                "y": alt.Y("Statement Balance:Q", title="Statement balance"),
-                "tooltip": [
-                    alt.Tooltip("Month:N", title="Month"),
-                    alt.Tooltip(f"{ACCOUNT_COL}:N", title="Account"),
-                    alt.Tooltip("Balance label:N", title="Statement balance"),
-                ],
-            }
-            if series[ACCOUNT_COL].nunique() > 1:
-                encoding["color"] = alt.Color(f"{ACCOUNT_COL}:N", title="Account")
-            chart = alt.Chart(series).mark_line(point=True).encode(**encoding).properties(height=320)
-            _show_chart(chart)
-    with bars:
-        st.subheader("New charges vs payments")
-        long = charges_and_payments(monthly)
-        if long.empty:
-            st.info("No charges or payments in this filter.")
-        else:
-            chart = (
-                alt.Chart(long)
-                .mark_bar()
-                .encode(
-                    x=alt.X("Date:T", title="Month", axis=alt.Axis(format="%b %Y")),
-                    y=alt.Y("Amount:Q", title="Amount"),
-                    color=alt.Color("Measure:N", title=None),
-                    xOffset="Measure:N",
-                    tooltip=[
-                        alt.Tooltip("Date:T", title="Month", format="%b %Y"),
-                        alt.Tooltip("Measure:N", title="Measure"),
-                        alt.Tooltip("Amount label:N", title="Amount"),
-                    ],
-                )
-                .properties(height=320)
-            )
-            _show_chart(chart)
-
-
-def _show_chart(chart: alt.Chart) -> None:
-    st.altair_chart(chart, width="stretch")
+def _render_balance_chart(monthly: pd.DataFrame) -> None:
+    st.subheader("Statement balance by month")
+    series = balance_series(monthly)
+    if series.empty:
+        st.info("No credit card statement balances in this filter.")
+        return
+    chart = series.loc[:, ["Date", ACCOUNT_COL, "Statement Balance"]]
+    if chart[ACCOUNT_COL].nunique() > 1:
+        st.line_chart(
+            chart,
+            x="Date",
+            y="Statement Balance",
+            color=ACCOUNT_COL,
+            x_label="Month",
+            y_label="Statement balance",
+        )
+    else:
+        st.line_chart(
+            chart,
+            x="Date",
+            y="Statement Balance",
+            x_label="Month",
+            y_label="Statement balance",
+        )
 
 
 def _render_monthly_table(monthly: pd.DataFrame) -> None:
@@ -269,15 +355,68 @@ def _display_table(frame: pd.DataFrame) -> pd.DataFrame:
         display[KIND_COL] = display[KIND_COL].map(lambda kind: kind_spec(str(kind)).label)
     money = [column for column in (*NUM_COLS, INCOME_COL) if column in display.columns]
     display = format_money_columns(display, money)
+    return _clean_text(display)
+
+
+def _balance_table(frame: pd.DataFrame) -> pd.DataFrame:
+    display = frame.copy()
+    display[BAL_AS_OF] = display[BAL_AS_OF].map(lambda value: format_synced(value) or "")
+    display = display.rename(columns={BAL_ACCOUNT: "Account"})
+    display = format_money_columns(display, BALANCE_MONEY)
+    return _clean_text(display)
+
+
+def _transaction_table(frame: pd.DataFrame) -> pd.DataFrame:
+    display = pd.DataFrame(
+        {
+            "Date": frame[TXN_DATE].dt.strftime("%Y-%m-%d"),
+            "Account": frame[TXN_ACCOUNT],
+            "Merchant": frame[TXN_MERCHANT],
+            "Amount": frame[TXN_AMOUNT],
+            "Pending": frame[TXN_PENDING].map(lambda pending: "Pending" if pending else "Posted"),
+            "Category": frame[TXN_CATEGORY],
+        }
+    )
+    return _clean_text(format_money_columns(display, ["Amount"]))
+
+
+def _money_table(frame: pd.DataFrame, money_columns: list[str]) -> pd.DataFrame:
+    display = frame.copy()
+    if "Date" in display.columns:
+        display["Date"] = pd.to_datetime(display["Date"]).dt.strftime("%Y-%m-%d")
+    return _clean_text(format_money_columns(display, money_columns))
+
+
+def _clean_text(frame: pd.DataFrame) -> pd.DataFrame:
+    display = frame.copy()
     for column in display.columns:
-        if pd.api.types.is_string_dtype(display[column]):
-            display[column] = display[column].fillna("").astype(str).replace({"<NA>": ""})
+        if pd.api.types.is_string_dtype(display[column]) or display[column].dtype == object:
+            display[column] = display[column].map(_blank_text)
     return display
+
+
+def _blank_text(value: object) -> object:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        pass
+    text = str(value)
+    if text in {"<NA>", "NaT", "nan", "None"}:
+        return ""
+    return text
+
+
+def _range_bounds(picked) -> tuple[date | None, date | None]:
+    if isinstance(picked, (tuple, list)) and len(picked) == 2 and all(item is not None for item in picked):
+        return picked[0], picked[1]
+    return None, None
 
 
 st.set_page_config(
     page_title="Kirbancials Finance Dashboard",
-    page_icon=":material/account_balance_wallet:",
     layout="wide",
 )
 require_login()

@@ -4,6 +4,7 @@
 !sample_data/*.csv
 *.xlsx
 *.xls
+*.gz
 .streamlit/secrets.toml
 data/
 
