@@ -6,7 +6,10 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 from kirbancials.periods import add_months, format_period, period_choice, resolve_period
+from kirbancials.sources import EXPENSE_SOURCES, expense_source_by_id, expense_source_for_account
 from kirbancials.spend import caveats, expense_lines, is_card_payment, total_income
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +78,69 @@ class PeriodTests(unittest.TestCase):
         self.assertEqual((selected, seen), ("ytd", "ytd"))
         selected, seen = period_choice("this-month", "last-month", "this-month")
         self.assertEqual(selected, "last-month")
+
+
+class BofaSourceTests(unittest.TestCase):
+    def test_registry_order_and_account_match(self) -> None:
+        self.assertEqual([source.id for source in EXPENSE_SOURCES], ["citi", "bofa", "nordstrom"])
+        source = expense_source_by_id("bofa")
+        self.assertIsNotNone(source)
+        assert source is not None
+        self.assertEqual(source.name, "Bank of America CC")
+        self.assertEqual(source.data_type, "transactions")
+        self.assertEqual(source.accounts, ("Bank of America card ending 5225",))
+        self.assertIs(expense_source_for_account("Bank of America card ending 5225"), source)
+        self.assertIsNone(expense_source_for_account("Bank of America"))
+        self.assertIsNone(expense_source_for_account("5225"))
+
+    def test_bofa_spend_uses_the_transaction_rules(self) -> None:
+        transactions = pd.DataFrame(
+            [
+                {
+                    "Account": "Bank of America card ending 5225",
+                    "Date": date(2026, 11, 2),
+                    "Amount": 100,
+                    "Pending": False,
+                    "Category": "Shopping",
+                    "Merchant": "Sample Store",
+                    "Description": "goods",
+                },
+                {
+                    "Account": "Bank of America card ending 5225",
+                    "Date": date(2026, 11, 3),
+                    "Amount": 20,
+                    "Pending": True,
+                    "Category": "Shopping",
+                    "Merchant": "Sample Pending",
+                    "Description": "hold",
+                },
+                {
+                    "Account": "Bank of America card ending 5225",
+                    "Date": date(2026, 11, 4),
+                    "Amount": -10,
+                    "Pending": False,
+                    "Category": "Shopping",
+                    "Merchant": "Sample Return",
+                    "Description": "refund",
+                },
+                {
+                    "Account": "Bank of America card ending 5225",
+                    "Date": date(2026, 11, 5),
+                    "Amount": -50,
+                    "Pending": False,
+                    "Category": "Payment",
+                    "Merchant": "PAYMENT THANK YOU",
+                    "Description": "autopay",
+                },
+            ]
+        )
+        lines = expense_lines(transactions, pd.DataFrame(), resolve_period("this-month", TODAY))
+        ordered = [line.name for line in lines]
+        self.assertEqual(ordered[:3], ["Citibank CC", "Bank of America CC", "Nordstrom CC"])
+        bofa = next(line for line in lines if line.source_id == "bofa")
+        self.assertEqual(bofa.total, 110)
+        self.assertEqual(bofa.pending_charges, 1)
+        self.assertEqual(bofa.data_through, date(2026, 11, 5))
 
 
 class SamplePnlTests(unittest.TestCase):

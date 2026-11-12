@@ -38,6 +38,12 @@ EXPENSE_SOURCES: tuple[ExpenseSource, ...] = (
         accounts=("Citi AAdvantage card ending 7690",),
     ),
     ExpenseSource(
+        id="bofa",
+        name="Bank of America CC",
+        data_type="transactions",
+        accounts=("Bank of America card ending 5225",),
+    ),
+    ExpenseSource(
         id="nordstrom",
         name="Nordstrom CC",
         data_type="statements",
