@@ -93,7 +93,7 @@ EXPENSE_SOURCES: tuple[ExpenseSource, ...] = (
     ),
     ExpenseSource(
         id="nordstrom",
-        name="Nordstrom",
+        name="Nordstrom - 5488",
         data_type="statements",
         accounts=("Nordstrom card ending 5488",),
     ),

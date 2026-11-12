@@ -256,7 +256,7 @@ class BofaSourceTests(unittest.TestCase):
                 "Capital One - 2391",
                 "Amex Business Gold - 2003",
                 "Morgan Stanley - 3008",
-                "Nordstrom",
+                "Nordstrom - 5488",
             ],
         )
         bofa = next(line for line in lines if line.source_id == "bofa")
@@ -284,15 +284,15 @@ class SamplePnlTests(unittest.TestCase):
         self.assertEqual(by_name["Citibank - 7690"].total, 140)
         self.assertEqual(by_name["Citibank - 7690"].pending_charges, 1)
         self.assertEqual(by_name["Citibank - 7690"].data_through, date(2026, 11, 10))
-        self.assertEqual(by_name["Nordstrom"].total, 0)
-        self.assertEqual(by_name["Nordstrom"].latest_closing, date(2026, 1, 20))
+        self.assertEqual(by_name["Nordstrom - 5488"].total, 0)
+        self.assertEqual(by_name["Nordstrom - 5488"].latest_closing, date(2026, 1, 20))
         self.assertEqual(by_name["Sample card ending 0000"].total, 40)
         self.assertNotIn("Sample household expenses", by_name)
         self.assertEqual(sum(line.total for line in this_month), 180)
         self.assertEqual(total_income(), 0)
         self.assertIn("Citibank - 7690 includes 1 pending charge.", caveats(this_month))
         self.assertIn(
-            "Nordstrom from monthly statements, latest statement closed 2026-01-20.",
+            "Nordstrom - 5488 from monthly statements, latest statement closed 2026-01-20.",
             caveats(this_month),
         )
 
@@ -304,9 +304,9 @@ class SamplePnlTests(unittest.TestCase):
 
         all_time = expense_lines(tx, monthly, resolve_period("all-time", TODAY))
         all_by_name = {line.name: line for line in all_time}
-        self.assertEqual(all_by_name["Nordstrom"].total, 3100)
-        self.assertEqual(all_by_name["Nordstrom"].interest, 100)
-        self.assertEqual(all_by_name["Nordstrom"].fees, 100)
+        self.assertEqual(all_by_name["Nordstrom - 5488"].total, 3100)
+        self.assertEqual(all_by_name["Nordstrom - 5488"].interest, 100)
+        self.assertEqual(all_by_name["Nordstrom - 5488"].fees, 100)
         self.assertEqual(all_by_name["Sample household expenses"].total, 700)
 
 
