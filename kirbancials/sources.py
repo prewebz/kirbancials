@@ -93,6 +93,18 @@ EXPENSE_SOURCES: tuple[ExpenseSource, ...] = (
         accounts=("Morgan Stanley card ending 3008",),
     ),
     ExpenseSource(
+        id="amex_bonvoy_1004",
+        name="Marriott Bonvoy - 1004",
+        data_type="transactions",
+        accounts=("Marriott Bonvoy Amex card ending 1004",),
+    ),
+    ExpenseSource(
+        id="amex_bonvoy_biz_2009",
+        name="Bonvoy Business - 2009",
+        data_type="transactions",
+        accounts=("Bonvoy Business Amex card ending 2009",),
+    ),
+    ExpenseSource(
         id="nordstrom",
         name="Nordstrom - 5488",
         data_type="statements",
