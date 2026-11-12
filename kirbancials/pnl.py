@@ -9,7 +9,7 @@ import streamlit as st
 
 from kirbancials.activity import load_transactions, resolve_transactions
 from kirbancials.data import FinanceDataError, load_dataset, resolve_origin
-from kirbancials.formatting import format_money, format_money_columns
+from kirbancials.formatting import format_money, show_money_table
 from kirbancials.periods import PERIOD_KEYS, PERIOD_LABELS, Period, format_period, period_choice, resolve_period
 from kirbancials.sources import INCOME_SOURCES
 from kirbancials.spend import ExpenseLine, caveats, expense_lines, line_for_source_id, rows_for_line, total_income
@@ -87,17 +87,20 @@ def render_source_detail() -> None:
         if spending.empty:
             st.info("No statements in this period.")
         else:
-            st.dataframe(_statement_table(spending), width="stretch", hide_index=True)
+            show_money_table(
+                _statement_table(spending),
+                ["Net Spend", "Interest", "Fees", "New Charges (Purchases)", "Credits/Returns", "Payments"],
+            )
         return
 
     st.caption("Charges and refunds. Pending charges are included. Card payments are excluded.")
     if spending.empty:
         st.info("No charges or refunds in this period.")
     else:
-        st.dataframe(_transaction_table(spending), width="stretch", hide_index=True)
+        show_money_table(_transaction_table(spending), ["Amount"])
     if not payments.empty:
         with st.expander("Card payments (excluded from spend)"):
-            st.dataframe(_transaction_table(payments), width="stretch", hide_index=True)
+            show_money_table(_transaction_table(payments), ["Amount"])
 
 
 def _period_selector() -> Period:
@@ -177,7 +180,7 @@ def _transaction_table(frame: pd.DataFrame) -> pd.DataFrame:
             "Category": frame["Category"] if "Category" in frame.columns else "",
         }
     )
-    return format_money_columns(display, ["Amount"])
+    return display
 
 
 def _statement_table(frame: pd.DataFrame) -> pd.DataFrame:
@@ -201,4 +204,4 @@ def _statement_table(frame: pd.DataFrame) -> pd.DataFrame:
         display["Statement Closing Date"] = (
             parsed.dt.strftime("%Y-%m-%d").fillna("").replace("NaT", "")
         )
-    return format_money_columns(display, ["Net Spend", "Interest", "Fees", "New Charges (Purchases)", "Credits/Returns", "Payments"])
+    return display

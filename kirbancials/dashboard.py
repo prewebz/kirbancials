@@ -41,7 +41,7 @@ from kirbancials.data import (
     resolve_origin,
     summarize,
 )
-from kirbancials.formatting import format_money, format_money_columns
+from kirbancials.formatting import format_money, show_money_table
 from kirbancials.schema import (
     ACCOUNT_COL,
     INCOME_COL,
@@ -144,7 +144,7 @@ def _render_daily(transactions, balances, txn_error, bal_error) -> None:
     if balances.rows.empty:
         st.info("No balance data yet.")
     else:
-        st.dataframe(_balance_table(balances.rows), width="stretch", hide_index=True)
+        show_money_table(_balance_table(balances.rows), BALANCE_MONEY)
 
     if txn_error:
         st.error(txn_error)
@@ -162,11 +162,7 @@ def _render_daily(transactions, balances, txn_error, bal_error) -> None:
     if spend.empty:
         st.info("No charges this month.")
     else:
-        st.dataframe(
-            _money_table(spend, ["Month-to-date spend", "Pending charges"]),
-            width="stretch",
-            hide_index=True,
-        )
+        show_money_table(_money_table(spend), ["Month-to-date spend", "Pending charges"])
 
     accounts = sorted(transactions.rows[TXN_ACCOUNT].unique().tolist())
     selected = _select_value("Account", [ALL_ACCOUNTS, *accounts], key="txn_account", fallback=accounts[0])
@@ -176,7 +172,7 @@ def _render_daily(transactions, balances, txn_error, bal_error) -> None:
     if daily.empty:
         st.info("No charges this month for this account.")
     else:
-        st.dataframe(_money_table(daily, ["Total charges"]), width="stretch", hide_index=True)
+        show_money_table(_money_table(daily), ["Total charges"])
         st.bar_chart(daily, x="Date", y="Total charges", x_label="Date", y_label="Total charges", sort=False)
 
     st.subheader("Transactions")
@@ -190,7 +186,7 @@ def _render_daily(transactions, balances, txn_error, bal_error) -> None:
     if visible.empty:
         st.info("No transactions in this filter.")
         return
-    st.dataframe(_transaction_table(visible), width="stretch", hide_index=True)
+    show_money_table(_transaction_table(visible), ["Amount"])
 
 
 def _render_monthly() -> None:
@@ -297,7 +293,7 @@ def _render_monthly_table(monthly: pd.DataFrame) -> None:
         st.info("No monthly rows in this filter.")
         return
     table = monthly.sort_values(["Date", ACCOUNT_COL], ascending=[False, True], kind="mergesort")
-    st.dataframe(_display_table(table), width="stretch", hide_index=True)
+    show_money_table(_display_table(table), [*NUM_COLS, INCOME_COL])
 
 
 def _render_period_totals(periods: pd.DataFrame) -> None:
@@ -306,7 +302,7 @@ def _render_period_totals(periods: pd.DataFrame) -> None:
         if periods.empty:
             st.info("No period totals in this filter.")
             return
-        st.dataframe(_display_table(periods), width="stretch", hide_index=True)
+        show_money_table(_display_table(periods), [*NUM_COLS, INCOME_COL])
 
 
 def _display_table(frame: pd.DataFrame) -> pd.DataFrame:
@@ -316,8 +312,6 @@ def _display_table(frame: pd.DataFrame) -> pd.DataFrame:
     display = frame.loc[:, columns].copy()
     if KIND_COL in display.columns:
         display[KIND_COL] = display[KIND_COL].map(lambda kind: kind_spec(str(kind)).label)
-    money = [column for column in (*NUM_COLS, INCOME_COL) if column in display.columns]
-    display = format_money_columns(display, money)
     return _clean_text(display)
 
 
@@ -325,7 +319,6 @@ def _balance_table(frame: pd.DataFrame) -> pd.DataFrame:
     display = frame.copy()
     display[BAL_AS_OF] = display[BAL_AS_OF].map(lambda value: format_synced(value) or "")
     display = display.rename(columns={BAL_ACCOUNT: "Account"})
-    display = format_money_columns(display, BALANCE_MONEY)
     return _clean_text(display)
 
 
@@ -340,14 +333,14 @@ def _transaction_table(frame: pd.DataFrame) -> pd.DataFrame:
             "Category": frame[TXN_CATEGORY],
         }
     )
-    return _clean_text(format_money_columns(display, ["Amount"]))
+    return _clean_text(display)
 
 
-def _money_table(frame: pd.DataFrame, money_columns: list[str]) -> pd.DataFrame:
+def _money_table(frame: pd.DataFrame) -> pd.DataFrame:
     display = frame.copy()
     if "Date" in display.columns:
         display["Date"] = pd.to_datetime(display["Date"]).dt.strftime("%Y-%m-%d")
-    return _clean_text(format_money_columns(display, money_columns))
+    return _clean_text(display)
 
 
 def _clean_text(frame: pd.DataFrame) -> pd.DataFrame:

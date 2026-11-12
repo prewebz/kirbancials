@@ -75,6 +75,39 @@ class PaymentTests(unittest.TestCase):
         citi = next(line for line in lines if line.source_id == "citi")
         self.assertEqual(citi.total, 520)
 
+    def test_amount_columns_stay_numeric_for_sorting(self) -> None:
+        from kirbancials.formatting import money_column_config
+        from kirbancials.pnl import _statement_table, _transaction_table
+
+        transactions = _transaction_table(
+            pd.DataFrame(
+                {
+                    "Date": pd.to_datetime(["2026-11-01", "2026-11-02", "2026-11-03"]),
+                    "Merchant": ["A", "B", "US TREAS TAX PYMT"],
+                    "Amount": [2.0, 100.0, 500.0],
+                    "Pending": [False, False, False],
+                    "Category": ["Food", "Shopping", "Taxes"],
+                }
+            )
+        )
+        self.assertTrue(pd.api.types.is_numeric_dtype(transactions["Amount"]))
+        self.assertEqual(transactions["Amount"].tolist(), [2.0, 100.0, 500.0])
+        statements = _statement_table(
+            pd.DataFrame(
+                {
+                    "Month": ["2026-01", "2026-02"],
+                    "Net Spend": [20.0, 3.0],
+                    "Interest": [0.0, 1.5],
+                    "Fees": [0.0, 0.0],
+                }
+            )
+        )
+        self.assertTrue(pd.api.types.is_numeric_dtype(statements["Net Spend"]))
+        config = money_column_config(["Amount", "Net Spend"])
+        self.assertEqual(config["Amount"]["type_config"]["type"], "number")
+        self.assertEqual(config["Amount"]["type_config"]["format"], "dollar")
+        self.assertEqual(config["Net Spend"]["type_config"]["format"], "dollar")
+
 
 class PeriodTests(unittest.TestCase):
     def test_this_month_stops_at_today_and_starts_on_the_first(self) -> None:

@@ -1,7 +1,8 @@
 """Money display helpers.
 
-Negatives render as -$3,820.06. Streamlit's default number format puts the
-minus sign after the dollar sign, so metrics and tables use this helper.
+Metrics use format_money so negatives read -$3,820.06. Tables keep the raw
+numbers and use Streamlit's "dollar" column format, which is currency display
+with the minus sign before the dollar sign, and sorts by numeric value.
 """
 
 from __future__ import annotations
@@ -45,3 +46,29 @@ def format_money_columns(frame: pd.DataFrame, columns: Sequence[str]) -> pd.Data
         if column in display.columns:
             display[column] = display[column].map(format_money)
     return display
+
+
+def money_column_config(columns: Sequence[str]) -> dict[str, object]:
+    """Number column config so a dataframe sorts by dollar value."""
+    import streamlit as st
+
+    return {
+        column: st.column_config.NumberColumn(format="dollar")
+        for column in columns
+    }
+
+
+def show_money_table(frame: pd.DataFrame, money_columns: Sequence[str]) -> None:
+    """Show a table with money columns left numeric and formatted as currency."""
+    import streamlit as st
+
+    display = frame.copy()
+    present = [column for column in money_columns if column in display.columns]
+    for column in present:
+        display[column] = pd.to_numeric(display[column], errors="coerce")
+    st.dataframe(
+        display,
+        width="stretch",
+        hide_index=True,
+        column_config=money_column_config(present),
+    )
