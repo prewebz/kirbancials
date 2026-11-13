@@ -2,11 +2,11 @@
 
 Personal finance dashboard for credit card statement summaries and other expenses. It is a [Streamlit](https://streamlit.io/) app meant to run as a free Python web service on [Render](https://render.com/).
 
-After login the landing page is **Profit & Loss**. It totals income (none connected yet) and expenses for a period you pick. Each expense name links to that source. **Daily spending** and **Monthly statements** stay available from the sidebar.
+After login the landing page is **Profit & Loss**. It totals cash income and expenses for a period you pick. Each expense name links to that source, and each income total links to that income source. **Daily spending** and **Monthly statements** stay available from the sidebar.
 
 Expense sources are registered in `kirbancials/sources.py`. Citibank - 7690 reads transactions for `Citi AAdvantage card ending 7690`. Nordstrom reads statement months for `Nordstrom card ending 5488`. Any other Account in the data is still listed under its own name. See [Adding sources](#adding-sources).
 
-Real statements and transactions never belong in git. The repository includes only fake round numbers under `sample_data/` for local development.
+Real statements, transactions, and income deposits never belong in git. The repository includes only fake round numbers under `sample_data/` for local development. Income tests use fake CSV text in the test file, not a data file.
 
 ## Run locally
 
@@ -78,11 +78,27 @@ Amount sign: positive is a charge, negative is a payment, refund, or credit. Row
 
 One row is kept per account, the row with the latest `As Of`.
 
+### Income
+
+Profit & Loss reads cash income from `FINANCE_INCOME_CSV`: the raw CSV text, not gzipped. If that variable is missing or blank, every income total is `$0.00` and the page says `No income data yet`. This file is not part of card spend or statement spend.
+
+| Column | Role |
+| --- | --- |
+| Transaction ID | Stable id. A repeated id is kept once. A blank id is kept. |
+| Date | `YYYY-MM-DD`. The deposit counts on this date. |
+| Source | Income source id, such as `chipotle_nnn`. An id that is not registered still gets a row, labeled with the raw id. |
+| Description | Shown on the source detail page. |
+| Amount | Dollars received. |
+
+Sources are registered in `kirbancials/sources.py` as `IncomeSource` (`id`, display name, frequency). Chipotle NNN is monthly. Waterleaf Apts (PEM Residential) is quarterly. Append another `IncomeSource` to add a row. The main page lists each source with its frequency beside the name, like a loan APR, and the total received in the selected period. That total links to `?source=<id>`, which lists the deposits in the period (date, description, amount) and a total.
+
+Do not commit the CSV. On Render, set `FINANCE_INCOME_CSV` on the service **Environment** page the same way as the other CSV variables. Leave it unset until there is data.
+
 ## Profit & Loss
 
 The period choices are This month (the default), Last month, Year to date, Last 12 months, and All time. The exact dates are shown under the selector. This month, year to date, and the last 12 months end today. Last month is the previous calendar month, from the 1st through the last day. The last 12 months start the day after the same date a year ago.
 
-Income has no sources yet, so the page shows "No income sources connected yet" and total income `$0.00`. Add a future source by appending an `IncomeSource` in `kirbancials/sources.py` and teaching `income_for_source` how to read it.
+Income is cash received on the deposit date. With `FINANCE_INCOME_CSV` unset or empty, the section shows `No income data yet` and total income `$0.00`. With a CSV, each registered source is one row: the name, the frequency beside it, and the total received in the period. A Source id that is not in the registry is still listed under that raw id. Total income is the sum of those rows. Income is not added into any expense total.
 
 Expenses are one row per source: description, total spend, and data through. Total spend links to `?source=<id>` on the source detail page. The period is carried in the same query string. Logging in once covers every page in the session.
 
@@ -94,7 +110,7 @@ Auto loans are listed after the cards. Their rows are estimated interest: curren
 
 Net profit / (loss) is total income minus total expenses. A loss is shown as `-$1,234.56`.
 
-`python -m unittest tests.test_pnl` checks the payment rule, month boundaries, and the sample totals.
+`python -m unittest tests.test_pnl tests.test_income` checks the payment rule, month boundaries, the sample expense totals, and cash income.
 
 Daily spending and Monthly statements are unchanged secondary pages.
 
@@ -127,7 +143,8 @@ Amounts are shown as stored. Negatives render as `-$1,234.56`.
 
 - Another card: add one `ExpenseSource` in `kirbancials/sources.py` (`id`, display name, `transactions` or `statements`, and the Account values it owns), then put those Account values in the CSV. Accounts that are not listed still show up on Profit & Loss under their raw name.
 - Other expenses: set `Source Kind` to `expense`. Statement-only columns can be left blank.
-- Income later: set `Source Kind` to `income` and put the amount in `Income` (or in `Net Spend` if that column is the amount). No dashboard rewrite is required.
+- Cash income: append one `IncomeSource` in `kirbancials/sources.py` (`id`, display name, and a frequency label such as `Monthly` or `Quarterly`). Use that id in the `Source` column of `FINANCE_INCOME_CSV`. Ids that are not listed still show under the raw id.
+- Statement-file income: set `Source Kind` to `income` and put the amount in `Income` (or in `Net Spend` if that column is the amount). That stays on the statement summary. It does not change Profit & Loss cash income.
 - A new kind with its own total rules: add one `SourceKind` entry in `kirbancials/schema.py`.
 
 Statement loading lives in `kirbancials/data.py`. Transactions and balances live in `kirbancials/activity.py`.
@@ -169,5 +186,6 @@ Do not commit them. On the service **Environment** page:
 
 - **Transactions.** Prefer a secret file named `transactions.csv` (mounted at `/etc/secrets/transactions.csv`). Or set `FINANCE_TRANSACTIONS_CSV` to the raw CSV. If the text is large, gzip it, base64-encode the bytes, and set `FINANCE_TRANSACTIONS_CSV_GZ`. That variable is checked first. Secret files on a service share a 1 MB limit.
 - **Balances.** Set `FINANCE_BALANCES_CSV` to the raw CSV (`Account`, `As Of`, `Current Balance`, `Available Credit`, `Credit Limit`).
+- **Income.** Set `FINANCE_INCOME_CSV` to the raw CSV (`Transaction ID`, `Date`, `Source`, `Description`, `Amount`). Plain text, not gzipped. Leave it unset to show income as `$0.00`.
 
 Until those are set, the deployed app shows the fake samples and a banner. If the transaction sample file is missing as well, Daily spending says `No transaction data yet`.

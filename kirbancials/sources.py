@@ -3,6 +3,10 @@
 Add a card by appending one ExpenseSource. Accounts listed here are owned by
 that source. Any other Account value found in the data still becomes its own
 profit-and-loss row.
+
+Add a cash-income row by appending one IncomeSource. Deposits come from
+FINANCE_INCOME_CSV, matched on Source. A Source id that is not listed here
+still becomes its own row, labeled with that raw id.
 """
 
 from __future__ import annotations
@@ -21,14 +25,15 @@ class ExpenseSource:
 
 @dataclass(frozen=True)
 class IncomeSource:
-    """Placeholder for a future income feed.
+    """One cash-income source on the profit and loss page.
 
-    Register a source here and teach `income_for_source` how to read it.
-    The profit and loss page already sums every registered source.
+    `id` matches the Source column in FINANCE_INCOME_CSV. `frequency` is a
+    short label shown beside the name, such as Monthly or Quarterly.
     """
 
     id: str
     name: str
+    frequency: str
 
 
 EXPENSE_SOURCES: tuple[ExpenseSource, ...] = (
@@ -140,13 +145,31 @@ EXPENSE_SOURCES: tuple[ExpenseSource, ...] = (
     ),
 )
 
-INCOME_SOURCES: tuple[IncomeSource, ...] = ()
+INCOME_SOURCES: tuple[IncomeSource, ...] = (
+    IncomeSource(
+        id="chipotle_nnn",
+        name="Chipotle NNN",
+        frequency="Monthly",
+    ),
+    IncomeSource(
+        id="waterleaf_pem",
+        name="Waterleaf Apts (PEM Residential)",
+        frequency="Quarterly",
+    ),
+)
 
 UNMAPPED_PREFIX = "account:"
 
 
 def expense_source_by_id(source_id: str) -> ExpenseSource | None:
     for source in EXPENSE_SOURCES:
+        if source.id == source_id:
+            return source
+    return None
+
+
+def income_source_by_id(source_id: str) -> IncomeSource | None:
+    for source in INCOME_SOURCES:
         if source.id == source_id:
             return source
     return None

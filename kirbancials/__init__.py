@@ -1,8 +1,9 @@
 """Finance data layer for the Kirbancials dashboard.
 
-Statement CSVs, daily card transactions, and balance snapshots each have their
-own loader. New cards are new Account values. Income is a Source Kind on the
-statement file. Transaction rows keep the Plaid sign: positive charges,
+Statement CSVs, daily card transactions, balance snapshots, and cash income
+each have their own loader. New cards are new Account values. Statement income
+is a Source Kind on the statement file. Profit and loss cash income is
+FINANCE_INCOME_CSV. Transaction rows keep the Plaid sign: positive charges,
 negative payments and credits.
 """
 
