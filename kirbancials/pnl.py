@@ -10,9 +10,19 @@ import streamlit as st
 from kirbancials.activity import load_balances, load_transactions, resolve_balances, resolve_transactions
 from kirbancials.data import FinanceDataError, load_dataset, resolve_origin
 from kirbancials.formatting import format_money, show_money_table
+from kirbancials.income import (
+    IncomeLine,
+    deposits_for_source,
+    income_line_for_id,
+    income_lines,
+    income_table,
+    load_income,
+    net_profit,
+    resolve_income,
+)
 from kirbancials.loans import estimated_daily_interest, estimated_monthly_interest, loan_payment_table
 from kirbancials.periods import PERIOD_KEYS, PERIOD_LABELS, Period, format_period, period_choice, resolve_period
-from kirbancials.sources import INCOME_SOURCES
+from kirbancials.sources import expense_source_by_id, income_source_by_id
 from kirbancials.spend import ExpenseLine, caveats, expense_lines, line_for_source_id, rows_for_line, total_income
 
 DETAIL_PAGE = "views/source_detail.py"
@@ -27,17 +37,18 @@ def render_profit_and_loss() -> None:
         st.warning("Showing bundled sample data. These are fake round numbers, not your accounts.")
 
     period = _period_selector()
-    income = total_income()
+    deposits, income_error = _load_income()
+    if income_error:
+        st.error(income_error)
+    received = income_lines(deposits, period)
+    income = total_income(deposits, period)
     lines = expense_lines(transactions, monthly, period, balances)
     expenses = sum(line.total for line in lines)
 
     st.subheader("Income")
-    if not INCOME_SOURCES:
-        st.caption("No income sources connected yet")
-    else:
-        for source in INCOME_SOURCES:
-            st.write(f"{source.name} {format_money(0)}")
-    st.write(f"Total income {format_money(income)}")
+    if deposits.empty:
+        st.caption("No income data yet")
+    _income_rows(received, period, income)
 
     st.subheader("Expenses")
     card_lines = [line for line in lines if line.data_type != "loan"]
@@ -54,7 +65,7 @@ def render_profit_and_loss() -> None:
     for note in caveats(lines):
         st.caption(note)
 
-    net = income - expenses
+    net = net_profit(income, expenses)
     st.subheader("Net profit / (loss)")
     rendered = format_money(net)
     if net < 0:
@@ -77,6 +88,13 @@ def render_source_detail() -> None:
         st.warning("Showing bundled sample data. These are fake round numbers, not your accounts.")
 
     period = _period_selector()
+    deposits, income_error = _load_income()
+    if income_error:
+        st.error(income_error)
+    if _is_income_source(source_id, deposits):
+        _render_income_detail(source_id, deposits, period)
+        return
+
     line = line_for_source_id(source_id, transactions, monthly, period, balances)
     if line is None:
         st.write("That expense source was not found.")
@@ -139,6 +157,53 @@ def _period_selector() -> Period:
     return period
 
 
+def _income_rows(lines: list[IncomeLine], period: Period, income: float) -> None:
+    header = st.columns([3, 2])
+    header[0].markdown("**Income description**")
+    header[1].markdown("**Total received**")
+    for line in lines:
+        row = st.columns([3, 2])
+        row[0].write(line.label)
+        row[1].page_link(
+            DETAIL_PAGE,
+            label=format_money(line.total),
+            query_params={"source": line.source_id, "period": period.key},
+        )
+    total = st.columns([3, 2])
+    total[0].markdown("**Total income**")
+    total[1].markdown(f"**{format_money(income)}**")
+
+
+def _is_income_source(source_id: str, deposits: pd.DataFrame) -> bool:
+    """True for a registered income id or a raw id that appears on a deposit.
+
+    A registered expense id stays on the expense detail page.
+    """
+    if expense_source_by_id(source_id) is not None:
+        return False
+    if income_source_by_id(source_id) is not None:
+        return True
+    if deposits.empty or "Source" not in deposits.columns:
+        return False
+    return bool((deposits["Source"] == source_id).any())
+
+
+def _render_income_detail(source_id: str, deposits: pd.DataFrame, period: Period) -> None:
+    line = income_line_for_id(source_id, deposits, period)
+    if line is None:
+        st.write("That income source was not found.")
+        _back_link(period)
+        return
+    st.subheader(line.label)
+    _back_link(period)
+    st.write(f"Total received {format_money(line.total)}")
+    rows = deposits_for_source(deposits, source_id, period)
+    if rows.empty:
+        st.info("No deposits in this period.")
+        return
+    show_money_table(income_table(rows), ["Amount"])
+
+
 def _expense_rows(lines: list[ExpenseLine], period: Period) -> None:
     if not lines:
         return
@@ -185,8 +250,6 @@ def _render_loan_detail(line: ExpenseLine, transactions: pd.DataFrame, period: P
 
 
 def _loan_account(line: ExpenseLine) -> str:
-    from kirbancials.sources import expense_source_by_id
-
     source = expense_source_by_id(line.source_id)
     if source is None or not source.accounts:
         return ""
@@ -223,6 +286,13 @@ def _load() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bool, list[str]]:
         errors.append(str(exc))
         balance_rows = pd.DataFrame()
     return txn_rows, monthly, balance_rows, sample, errors
+
+
+def _load_income() -> tuple[pd.DataFrame, str | None]:
+    try:
+        return load_income(resolve_income()), None
+    except FinanceDataError as exc:
+        return load_income(None), str(exc)
 
 
 def _transaction_table(frame: pd.DataFrame) -> pd.DataFrame:

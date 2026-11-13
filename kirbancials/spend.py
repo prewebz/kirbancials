@@ -13,11 +13,11 @@ from datetime import date
 
 import pandas as pd
 
+from kirbancials.income import received_for_source, total_received
 from kirbancials.loans import current_balance, elapsed_days, estimated_interest
 from kirbancials.periods import Period
 from kirbancials.sources import (
     EXPENSE_SOURCES,
-    INCOME_SOURCES,
     ExpenseSource,
     account_from_unmapped_id,
     expense_source_by_id,
@@ -183,15 +183,26 @@ def caveats(lines: list[ExpenseLine]) -> list[str]:
     return notes
 
 
-def total_income() -> float:
-    """Sum registered income sources. None are connected yet."""
-    return sum(income_for_source(source.id) for source in INCOME_SOURCES)
+def total_income(
+    deposits: pd.DataFrame | None = None,
+    period: Period | None = None,
+) -> float:
+    """Sum cash income in the period. No deposit table means $0.
+
+    Expense lines never call this. Card and statement spend stay on their own.
+    """
+    return total_received(deposits, period)
 
 
-def income_for_source(source_id: str) -> float:
-    """Read one income source. New sources register in INCOME_SOURCES and extend this."""
-    del source_id
-    return 0.0
+def income_for_source(
+    source_id: str,
+    deposits: pd.DataFrame | None = None,
+    period: Period | None = None,
+) -> float:
+    """Cash received for one source id in the period. No deposit table means $0."""
+    if deposits is None or period is None:
+        return 0.0
+    return received_for_source(deposits, source_id, period)
 
 
 def _loan_line(
