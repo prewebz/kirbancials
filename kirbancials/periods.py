@@ -1,7 +1,9 @@
 """Profit and loss date ranges.
 
-This month, year to date, and the last 12 months end today.
+This month, quarter to date, year to date, and the last 12 months end today.
 Last month is the previous calendar month, first day through last day.
+Quarter to date starts on the first day of the current calendar quarter.
+All time stays resolvable for older links and tests. It is not in the picker.
 """
 
 from __future__ import annotations
@@ -14,17 +16,17 @@ from datetime import date, timedelta
 PERIOD_KEYS: tuple[str, ...] = (
     "this-month",
     "last-month",
+    "qtd",
     "ytd",
     "last-12-months",
-    "all-time",
 )
 
 PERIOD_LABELS: dict[str, str] = {
     "this-month": "This month",
     "last-month": "Last month",
+    "qtd": "Quarter to date",
     "ytd": "Year to date",
     "last-12-months": "Last 12 months",
-    "all-time": "All time",
 }
 
 
@@ -54,18 +56,26 @@ def add_months(day: date, months: int) -> date:
     return date(year, month, min(day.day, last_day))
 
 
+def quarter_start(day: date) -> date:
+    """First day of the calendar quarter that contains `day`."""
+    month = ((day.month - 1) // 3) * 3 + 1
+    return date(day.year, month, 1)
+
+
 def resolve_period(key: str, today: date) -> Period:
+    if key == "all-time":
+        return Period(key, "All time", None, None)
     if key not in PERIOD_LABELS:
         key = "this-month"
     label = PERIOD_LABELS[key]
-    if key == "all-time":
-        return Period(key, label, None, None)
     if key == "this-month":
         return Period(key, label, today.replace(day=1), today)
     if key == "last-month":
         first_this_month = today.replace(day=1)
         end = first_this_month - timedelta(days=1)
         return Period(key, label, end.replace(day=1), end)
+    if key == "qtd":
+        return Period(key, label, quarter_start(today), today)
     if key == "ytd":
         return Period(key, label, date(today.year, 1, 1), today)
     start = add_months(today, -12) + timedelta(days=1)

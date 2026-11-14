@@ -96,7 +96,13 @@ Do not commit the CSV. On Render, set `FINANCE_INCOME_CSV` on the service **Envi
 
 ## Profit & Loss
 
-The period choices are This month (the default), Last month, Year to date, Last 12 months, and All time. The exact dates are shown under the selector. This month, year to date, and the last 12 months end today. Last month is the previous calendar month, from the 1st through the last day. The last 12 months start the day after the same date a year ago.
+The period picker is at the top of the page. The choices are This month (the default), Last month, Quarter to date, Year to date, and Last 12 months. The exact dates are shown under the selector. This month, quarter to date, year to date, and the last 12 months end today. Last month is the previous calendar month, from the 1st through the last day. Quarter to date starts on the first day of the current calendar quarter. The last 12 months start the day after the same date a year ago.
+
+For the selected period, four figures sit under the picker: total income, total expenses, net, and a monthly run rate. Net is green when positive and red when negative. The run rate is the average net per calendar month. A period shorter than a month is scaled to 30 days, and the card says so. Under that, a debt snapshot shows the total current credit card balance and estimated loan interest for this month (current balance and APR, labeled est.). Next to it, expected income for the next calendar month uses each source's frequency and last payment: monthly sources repeat the last amount, quarterly sources count only when the last payment plus three months falls in that next month, and irregular sources are excluded and named. A bar chart shows income and expenses for the last six months, with net as a line. The current month runs through today.
+
+Card transactions only cover a short recent window. When the selected period or the chart starts before the earliest transaction, the page says `Expense data available from <date>` instead of treating the missing months as zero spend. Months before that date with no statement or loan expense are left off the expense bars.
+
+The income and expense rows below the chart are unchanged.
 
 Income is cash received on the deposit date. With `FINANCE_INCOME_CSV` unset or empty, the section shows `No income data yet` and total income `$0.00`. With a CSV, each registered source is one row: the name, the frequency beside it, and the total received in the period. A Source id that is not in the registry is still listed under that raw id. Total income is the sum of those rows. Income is not added into any expense total.
 
@@ -110,7 +116,7 @@ Auto loans are listed after the cards. Their rows are estimated interest: curren
 
 Net profit / (loss) is total income minus total expenses. A loss is shown as `-$1,234.56`.
 
-`python -m unittest tests.test_pnl tests.test_income` checks the payment rule, month boundaries, the sample expense totals, and cash income.
+`python -m unittest discover` checks the payment rule, month boundaries, the sample expense totals, cash income, the run rate, expected next-month income, and period ranges.
 
 Daily spending and Monthly statements are unchanged secondary pages.
 

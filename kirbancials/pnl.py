@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -21,6 +22,16 @@ from kirbancials.income import (
     resolve_income,
 )
 from kirbancials.loans import estimated_daily_interest, estimated_monthly_interest, loan_payment_table
+from kirbancials.overview import (
+    credit_card_balance_total,
+    estimated_loan_interest_this_month,
+    expected_income_next_month,
+    expense_coverage_note,
+    expense_data_start,
+    income_expense_by_month,
+    monthly_run_rate,
+    recent_month_periods,
+)
 from kirbancials.periods import PERIOD_KEYS, PERIOD_LABELS, Period, format_period, period_choice, resolve_period
 from kirbancials.sources import expense_source_by_id, income_source_by_id
 from kirbancials.spend import ExpenseLine, caveats, expense_lines, line_for_source_id, rows_for_line, total_income
@@ -36,7 +47,8 @@ def render_profit_and_loss() -> None:
     if sample:
         st.warning("Showing bundled sample data. These are fake round numbers, not your accounts.")
 
-    period = _period_selector()
+    today = date.today()
+    period = _period_selector(today)
     deposits, income_error = _load_income()
     if income_error:
         st.error(income_error)
@@ -44,7 +56,14 @@ def render_profit_and_loss() -> None:
     income = total_income(deposits, period)
     lines = expense_lines(transactions, monthly, period, balances)
     expenses = sum(line.total for line in lines)
+    net = net_profit(income, expenses)
+    available_from = expense_data_start(transactions)
 
+    _render_summary(income, expenses, net, period, available_from)
+    _render_snapshot(balances, deposits, today)
+    _render_trend(transactions, monthly, deposits, balances, today, available_from)
+
+    st.divider()
     st.subheader("Income")
     if deposits.empty:
         st.caption("No income data yet")
@@ -135,14 +154,16 @@ def render_source_detail() -> None:
             show_money_table(_transaction_table(payments), ["Amount"])
 
 
-def _period_selector() -> Period:
+def _period_selector(today: date | None = None) -> Period:
     requested, seen = period_choice(
         st.query_params.get("period"),
         st.session_state.get("pnl_period"),
         st.session_state.get("pnl_period_seen"),
     )
+    if requested not in PERIOD_KEYS:
+        requested = "this-month"
     st.session_state["pnl_period"] = requested
-    st.session_state["pnl_period_seen"] = seen
+    st.session_state["pnl_period_seen"] = seen if seen in PERIOD_KEYS else requested
     selected = st.selectbox(
         "Period",
         PERIOD_KEYS,
@@ -152,9 +173,134 @@ def _period_selector() -> Period:
     if st.query_params.get("period") != selected:
         st.query_params["period"] = selected
         st.session_state["pnl_period_seen"] = selected
-    period = resolve_period(selected, date.today())
+    period = resolve_period(selected, today or date.today())
     st.caption(format_period(period))
     return period
+
+
+def _render_summary(
+    income: float,
+    expenses: float,
+    net: float,
+    period: Period,
+    available_from: date | None,
+) -> None:
+    rate = monthly_run_rate(net, period)
+    columns = st.columns(4)
+    columns[0].metric("Total income", format_money(income), border=True)
+    columns[1].metric("Total expenses", format_money(expenses), border=True)
+    columns[2].metric("Net", _colored_net(net), border=True)
+    columns[3].metric(
+        "Monthly run rate",
+        format_money(rate.amount),
+        delta=rate.label,
+        delta_color="off",
+        delta_arrow="off",
+        border=True,
+    )
+    note = expense_coverage_note(period.start, available_from)
+    if note:
+        st.caption(note)
+
+
+def _render_snapshot(balances: pd.DataFrame, deposits: pd.DataFrame, today: date) -> None:
+    left, right = st.columns(2)
+    with left.container(border=True):
+        st.markdown("**Debt snapshot**")
+        cards, interest = st.columns(2)
+        cards.metric("Credit card balances", format_money(credit_card_balance_total(balances)))
+        interest.metric(
+            "Est. loan interest this month",
+            format_money(estimated_loan_interest_this_month(balances, today)),
+            help="Estimated from the current balance and APR, for this month through today.",
+        )
+    expected = expected_income_next_month(deposits, today)
+    with right.container(border=True):
+        st.markdown("**Expected income next month**")
+        st.metric("Expected", format_money(expected.total))
+        if expected.note:
+            st.caption(expected.note)
+
+
+def _render_trend(
+    transactions: pd.DataFrame,
+    monthly: pd.DataFrame,
+    deposits: pd.DataFrame,
+    balances: pd.DataFrame,
+    today: date,
+    available_from: date | None,
+) -> None:
+    st.subheader("Income and expenses")
+    st.caption("Last 6 months. The current month runs through today. Net is the line.")
+    months = recent_month_periods(today)
+    note = expense_coverage_note(months[0].start if months else None, available_from)
+    if note:
+        st.caption(note)
+    frame = income_expense_by_month(transactions, monthly, deposits, balances, today)
+    chart = _income_expense_chart(frame)
+    if chart is None:
+        st.info("No income or expenses in the last 6 months.")
+        return
+    st.altair_chart(chart, use_container_width=True)
+
+
+def _income_expense_chart(frame: pd.DataFrame) -> alt.Chart | None:
+    if frame.empty:
+        return None
+    order = frame["month"].tolist()
+    long = frame.melt(id_vars=["month"], value_vars=["income", "expenses"], var_name="kind", value_name="amount")
+    long["kind"] = long["kind"].map({"income": "Income", "expenses": "Expenses"})
+    long = long.dropna(subset=["amount"])
+    net = frame.loc[:, ["month", "net"]].dropna(subset=["net"])
+    layers: list[alt.Chart] = []
+    if not long.empty:
+        layers.append(
+            alt.Chart(long)
+            .mark_bar()
+            .encode(
+                x=alt.X("month:N", sort=order, title=None),
+                xOffset="kind:N",
+                y=alt.Y("amount:Q", title=None),
+                color=alt.Color(
+                    "kind:N",
+                    title=None,
+                    scale=alt.Scale(domain=["Income", "Expenses"], range=["#2e7d32", "#c62828"]),
+                ),
+                tooltip=[
+                    alt.Tooltip("month:N", title="Month"),
+                    alt.Tooltip("kind:N", title=""),
+                    alt.Tooltip("amount:Q", title="Amount", format="$,.2f"),
+                ],
+            )
+        )
+    if not net.empty:
+        layers.append(
+            alt.Chart(net)
+            .mark_line(point=True, color="#1565c0")
+            .encode(
+                x=alt.X("month:N", sort=order, title=None),
+                y=alt.Y("net:Q", title=None),
+                tooltip=[
+                    alt.Tooltip("month:N", title="Month"),
+                    alt.Tooltip("net:Q", title="Net", format="$,.2f"),
+                ],
+            )
+        )
+    if not layers:
+        return None
+    chart = layers[0]
+    for layer in layers[1:]:
+        chart = chart + layer
+    return chart.resolve_scale(y="shared").properties(height=280)
+
+
+def _colored_net(net: float) -> str:
+    rendered = format_money(net)
+    if net > 0:
+        return f":green[{rendered}]"
+    if net < 0:
+        return f":red[{rendered}]"
+    return rendered
 
 
 def _income_rows(lines: list[IncomeLine], period: Period, income: float) -> None:
