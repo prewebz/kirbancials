@@ -50,15 +50,20 @@ class IncomeRegistryTests(unittest.TestCase):
             [
                 ("chipotle_nnn", "Chipotle NNN", "Monthly"),
                 ("waterleaf_pem", "Waterleaf Apts (PEM Residential)", "Quarterly"),
+                ("mf3distro", "MF3Distro", "Irregular"),
             ],
         )
         chipotle = income_source_by_id("chipotle_nnn")
         waterleaf = income_source_by_id("waterleaf_pem")
+        mf3distro = income_source_by_id("mf3distro")
         self.assertIsNotNone(chipotle)
         self.assertIsNotNone(waterleaf)
-        assert chipotle is not None and waterleaf is not None
+        self.assertIsNotNone(mf3distro)
+        assert chipotle is not None and waterleaf is not None and mf3distro is not None
         self.assertEqual(chipotle.frequency, "Monthly")
         self.assertEqual(waterleaf.frequency, "Quarterly")
+        self.assertEqual(mf3distro.frequency, "Irregular")
+        self.assertEqual(mf3distro.name, "MF3Distro")
         self.assertIsNone(income_source_by_id("side_gig"))
 
 
@@ -114,8 +119,11 @@ class MissingIncomeEnvTests(unittest.TestCase):
         self.assertTrue(frame.empty)
         period = resolve_period("this-month", TODAY)
         lines = income_lines(frame, period)
-        self.assertEqual([line.source_id for line in lines], ["chipotle_nnn", "waterleaf_pem"])
-        self.assertEqual([line.total for line in lines], [0.0, 0.0])
+        self.assertEqual(
+            [line.source_id for line in lines],
+            ["chipotle_nnn", "waterleaf_pem", "mf3distro"],
+        )
+        self.assertEqual([line.total for line in lines], [0.0, 0.0, 0.0])
         self.assertEqual(total_income(frame, period), 0)
         self.assertEqual(total_income(), 0)
         self.assertEqual(income_for_source("chipotle_nnn"), 0)
@@ -165,7 +173,7 @@ class IncomePeriodTests(unittest.TestCase):
         lines = income_lines(deposits, period)
         self.assertEqual(
             [line.source_id for line in lines],
-            ["chipotle_nnn", "waterleaf_pem", "side_gig"],
+            ["chipotle_nnn", "waterleaf_pem", "mf3distro", "side_gig"],
         )
         unknown = lines[-1]
         self.assertEqual(unknown.name, "side_gig")
