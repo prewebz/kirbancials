@@ -156,6 +156,11 @@ INCOME_SOURCES: tuple[IncomeSource, ...] = (
         name="Waterleaf Apts (PEM Residential)",
         frequency="Quarterly",
     ),
+    IncomeSource(
+        id="mf3distro",
+        name="MF3Distro",
+        frequency="Irregular",
+    ),
 )
 
 UNMAPPED_PREFIX = "account:"
