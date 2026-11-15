@@ -3,8 +3,9 @@
 Statement CSVs, daily card transactions, balance snapshots, and cash income
 each have their own loader. New cards are new Account values. Statement income
 is a Source Kind on the statement file. Profit and loss cash income is
-FINANCE_INCOME_CSV. Transaction rows keep the Plaid sign: positive charges,
-negative payments and credits.
+FINANCE_INCOME_CSV. Fixed loan schedules are FINANCE_LOAN_SCHEDULE_CSV.
+Transaction rows keep the Plaid sign: positive charges, negative payments
+and credits.
 """
 
 from kirbancials.activity import load_balances, load_transactions, resolve_balances, resolve_transactions

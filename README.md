@@ -90,15 +90,43 @@ Profit & Loss reads cash income from `FINANCE_INCOME_CSV`: the raw CSV text, not
 | Description | Shown on the source detail page. |
 | Amount | Dollars received. |
 
-Sources are registered in `kirbancials/sources.py` as `IncomeSource` (`id`, display name, frequency). Chipotle NNN is monthly. Waterleaf Apts (PEM Residential) is quarterly. Append another `IncomeSource` to add a row. The main page lists each source with its frequency beside the name, like a loan APR, and the total received in the selected period. That total links to `?source=<id>`, which lists the deposits in the period (date, description, amount) and a total.
+Sources are registered in `kirbancials/sources.py` as `IncomeSource` (`id`, display name, frequency). Chipotle NNN is monthly. Nexus Academy - FFB loan cover is monthly. Waterleaf Apts (PEM Residential) is quarterly. MF3Distro, Nexus Academy - Profit distributions, and Nexus Academy - Working capital loan repayment are irregular. Append another `IncomeSource` to add a row. The registry does not store an expected dollar amount. The main page lists each source with its frequency beside the name, like a loan APR, and the total received in the selected period. That total links to `?source=<id>`, which lists the deposits in the period (date, description, amount) and a total.
 
 Do not commit the CSV. On Render, set `FINANCE_INCOME_CSV` on the service **Environment** page the same way as the other CSV variables. Leave it unset until there is data.
+
+### Loan schedules
+
+Profit & Loss reads fixed amortization schedules from `FINANCE_LOAN_SCHEDULE_CSV`: the raw CSV text, not gzipped. If that variable is missing or blank, scheduled loans are left out and the page matches a run with no schedule. Do not commit the CSV. On Render, set it on the service **Environment** page the same way as the other CSV variables.
+
+The header row is exactly:
+
+`Loan ID,Lender,Loan Name,Collateral,Rate,Payment Number,Payment Date,Payment,Interest,Principal,Remaining Balance`
+
+| Column | Role |
+| --- | --- |
+| Loan ID | Groups rows into one expense. |
+| Lender | First half of the expense name. |
+| Loan Name | Second half of the expense name. |
+| Collateral | Shown on the source detail page. |
+| Rate | Annual percent, such as `5.9`. The row is labeled `Lender - Loan Name (5.9% sched.)`. |
+| Payment Number | One row per scheduled payment. `0` may be prepaid interest at closing and counts like any other row on that date. |
+| Payment Date | `YYYY-MM-DD`. Interest counts when this date falls in the selected period. |
+| Payment | Scheduled payment amount. Not an expense. Shown on the detail page and as the next payment on the debt snapshot. |
+| Interest | The expense for the period. Principal is not included. |
+| Principal | Not an expense. Shown on the detail page. |
+| Remaining Balance | Balance after that payment. |
+
+Each Loan ID is one expense row, for example `First Fidelity Bank - Chipotle cash-out loan (5.9% sched.)`. The period amount is the sum of Interest for payment dates in that period. That total is part of total expenses, net, the monthly run rate, and the six-month chart, for every period choice. The detail page lists the schedule rows in the period: date, payment, interest, principal, and remaining balance.
+
+The debt snapshot keeps the credit-card total. Its loan-interest figure adds this month's scheduled interest to the existing balance-and-APR estimate. Each scheduled loan is listed there with its remaining balance and its next payment date and amount. The remaining balance is the Remaining Balance of the latest payment dated on or before today. When today is before every payment, it is that first row's balance before the payment (remaining balance plus principal).
+
+A CSV that cannot be read shows a warning and leaves scheduled loans out. The rest of the page still loads. The warning does not include cells from the file.
 
 ## Profit & Loss
 
 The period picker is at the top of the page. The choices are This month (the default), Last month, Quarter to date, Year to date, and Last 12 months. The exact dates are shown under the selector. This month, quarter to date, year to date, and the last 12 months end today. Last month is the previous calendar month, from the 1st through the last day. Quarter to date starts on the first day of the current calendar quarter. The last 12 months start the day after the same date a year ago.
 
-For the selected period, four figures sit under the picker: total income, total expenses, net, and a monthly run rate. Net is green when positive and red when negative. The run rate is the average net per calendar month. A period shorter than a month is scaled to 30 days, and the card says so. Under that, a debt snapshot shows the total current credit card balance and estimated loan interest for this month (current balance and APR, labeled est.). Next to it, expected income for the next calendar month uses each source's frequency and last payment: monthly sources repeat the last amount, quarterly sources count only when the last payment plus three months falls in that next month, and irregular sources are excluded and named. A bar chart shows income and expenses for the last six months, with net as a line. The current month runs through today.
+For the selected period, four figures sit under the picker: total income, total expenses, net, and a monthly run rate. Net is green when positive and red when negative. The run rate is the average net per calendar month. A period shorter than a month is scaled to 30 days, and the card says so. Under that, a debt snapshot shows the total current credit card balance and estimated loan interest for this month (current balance and APR, labeled est.). When a loan schedule is configured, that interest figure also includes scheduled interest for payment dates this month, and each scheduled loan is listed with its remaining balance and next payment. Next to it, expected income for the next calendar month uses each source's frequency and last payment: monthly sources repeat the last amount, quarterly sources count only when the last payment plus three months falls in that next month, and irregular sources are excluded and named. A bar chart shows income and expenses for the last six months, with net as a line. The current month runs through today.
 
 Card transactions only cover a short recent window. When the selected period or the chart starts before the earliest transaction, the page says `Expense data available from <date>` instead of treating the missing months as zero spend. Months before that date with no statement or loan expense are left off the expense bars.
 
@@ -114,9 +142,11 @@ Statement sources (Nordstrom) sum `Net Spend` plus interest and fees for months 
 
 Auto loans are listed after the cards. Their rows are estimated interest: current balance times APR divided by 365, times the number of days in the period. Loan payments in the transaction file are not spend. A missing balance shows `$0` and a note. The detail page shows the APR, balance, monthly and daily estimates, and the payment table.
 
+Scheduled loans from `FINANCE_LOAN_SCHEDULE_CSV` are listed with that loan interest. The amount is scheduled Interest for payment dates in the period, including a payment number 0 row. Principal is not an expense. The detail page shows the rate, remaining balance, next payment, and the schedule rows in the period. With the variable unset or empty, those rows are absent.
+
 Net profit / (loss) is total income minus total expenses. A loss is shown as `-$1,234.56`.
 
-`python -m unittest discover` checks the payment rule, month boundaries, the sample expense totals, cash income, the run rate, expected next-month income, and period ranges.
+`python -m unittest discover` checks the payment rule, month boundaries, the sample expense totals, cash income, the run rate, expected next-month income, loan schedules, and period ranges.
 
 Daily spending and Monthly statements are unchanged secondary pages.
 
@@ -149,7 +179,8 @@ Amounts are shown as stored. Negatives render as `-$1,234.56`.
 
 - Another card: add one `ExpenseSource` in `kirbancials/sources.py` (`id`, display name, `transactions` or `statements`, and the Account values it owns), then put those Account values in the CSV. Accounts that are not listed still show up on Profit & Loss under their raw name.
 - Other expenses: set `Source Kind` to `expense`. Statement-only columns can be left blank.
-- Cash income: append one `IncomeSource` in `kirbancials/sources.py` (`id`, display name, and a frequency label such as `Monthly` or `Quarterly`). Use that id in the `Source` column of `FINANCE_INCOME_CSV`. Ids that are not listed still show under the raw id.
+- Cash income: append one `IncomeSource` in `kirbancials/sources.py` (`id`, display name, and a frequency label such as `Monthly` or `Quarterly`). Use that id in the `Source` column of `FINANCE_INCOME_CSV`. Ids that are not listed still show under the raw id. The next-month estimate uses that frequency and the last deposit. It does not read a stored expected amount.
+- A fixed amortization loan: put one row per payment in `FINANCE_LOAN_SCHEDULE_CSV`. Each Loan ID becomes an expense. Do not add it to `EXPENSE_SOURCES`, and do not commit the schedule.
 - Statement-file income: set `Source Kind` to `income` and put the amount in `Income` (or in `Net Spend` if that column is the amount). That stays on the statement summary. It does not change Profit & Loss cash income.
 - A new kind with its own total rules: add one `SourceKind` entry in `kirbancials/schema.py`.
 
@@ -193,5 +224,6 @@ Do not commit them. On the service **Environment** page:
 - **Transactions.** Prefer a secret file named `transactions.csv` (mounted at `/etc/secrets/transactions.csv`). Or set `FINANCE_TRANSACTIONS_CSV` to the raw CSV. If the text is large, gzip it, base64-encode the bytes, and set `FINANCE_TRANSACTIONS_CSV_GZ`. That variable is checked first. Secret files on a service share a 1 MB limit.
 - **Balances.** Set `FINANCE_BALANCES_CSV` to the raw CSV (`Account`, `As Of`, `Current Balance`, `Available Credit`, `Credit Limit`).
 - **Income.** Set `FINANCE_INCOME_CSV` to the raw CSV (`Transaction ID`, `Date`, `Source`, `Description`, `Amount`). Plain text, not gzipped. Leave it unset to show income as `$0.00`.
+- **Loan schedule.** Set `FINANCE_LOAN_SCHEDULE_CSV` to the raw CSV. The header is `Loan ID,Lender,Loan Name,Collateral,Rate,Payment Number,Payment Date,Payment,Interest,Principal,Remaining Balance`. Plain text, not gzipped. Leave it unset to leave scheduled loans out.
 
 Until those are set, the deployed app shows the fake samples and a banner. If the transaction sample file is missing as well, Daily spending says `No transaction data yet`.

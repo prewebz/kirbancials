@@ -16,12 +16,14 @@ import pandas as pd
 from kirbancials.income import received_for_source, total_received
 from kirbancials.loans import current_balance, elapsed_days, estimated_interest
 from kirbancials.periods import Period
+from kirbancials.schedules import latest_payment_date, loan_sources, rows_for_loan, scheduled_interest
 from kirbancials.sources import (
     EXPENSE_SOURCES,
     ExpenseSource,
     account_from_unmapped_id,
     expense_source_by_id,
     loan_accounts,
+    loan_id_from_schedule_source,
     mapped_accounts,
     unmapped_source_id,
 )
@@ -80,8 +82,13 @@ def expense_lines(
     monthly: pd.DataFrame,
     period: Period,
     balances: pd.DataFrame | None = None,
+    schedule: pd.DataFrame | None = None,
 ) -> list[ExpenseLine]:
-    """Registry sources first, then unmapped accounts that have rows in the period."""
+    """Registry sources first, then unmapped accounts, then schedule loans.
+
+    A missing schedule adds nothing. Scheduled interest uses the same line
+    list as estimated loan interest, so totals, net, and the chart share it.
+    """
     lines = [
         line_for_source(source, transactions, monthly, period, balances)
         for source in EXPENSE_SOURCES
@@ -97,6 +104,8 @@ def expense_lines(
         line = _statement_line(account, account, monthly, period, unmapped_source_id(account))
         if line.data_through is not None or line.total != 0:
             lines.append(line)
+    for source, _rows in loan_sources(schedule):
+        lines.append(line_for_source(source, transactions, monthly, period, balances, schedule))
     return lines
 
 
@@ -106,10 +115,16 @@ def line_for_source_id(
     monthly: pd.DataFrame,
     period: Period,
     balances: pd.DataFrame | None = None,
+    schedule: pd.DataFrame | None = None,
 ) -> ExpenseLine | None:
+    if loan_id_from_schedule_source(source_id) is not None:
+        for source, _rows in loan_sources(schedule):
+            if source.id == source_id:
+                return line_for_source(source, transactions, monthly, period, balances, schedule)
+        return None
     source = expense_source_by_id(source_id)
     if source is not None:
-        return line_for_source(source, transactions, monthly, period, balances)
+        return line_for_source(source, transactions, monthly, period, balances, schedule)
     account = account_from_unmapped_id(source_id)
     if account is None or expense_source_for_guard(account):
         return None
@@ -130,7 +145,10 @@ def line_for_source(
     monthly: pd.DataFrame,
     period: Period,
     balances: pd.DataFrame | None = None,
+    schedule: pd.DataFrame | None = None,
 ) -> ExpenseLine:
+    if source.data_type == "schedule":
+        return _schedule_line(source, period, schedule)
     if source.data_type == "loan":
         return _loan_line(source, period, balances)
     if source.data_type == "statements":
@@ -151,7 +169,7 @@ def rows_for_line(
         dates = _statement_dates(rows)
         mask = dates.map(lambda value: period.contains(_as_date(value)))
         return rows.loc[mask].copy(), rows.iloc[0:0]
-    if line.data_type == "loan":
+    if line.data_type in {"loan", "schedule"}:
         empty = transactions.iloc[0:0]
         return empty, empty
     rows = _drop_loan_accounts(_transaction_rows(transactions, accounts))
@@ -203,6 +221,32 @@ def income_for_source(
     if deposits is None or period is None:
         return 0.0
     return received_for_source(deposits, source_id, period)
+
+
+def _schedule_line(
+    source: ExpenseSource,
+    period: Period,
+    schedule: pd.DataFrame | None,
+) -> ExpenseLine:
+    """Interest for payment dates in the period. The same total feeds every rollup."""
+    loan_id = loan_id_from_schedule_source(source.id) or ""
+    rows = rows_for_loan(schedule, loan_id)
+    interest = scheduled_interest(rows, period)
+    return ExpenseLine(
+        source_id=source.id,
+        name=source.name,
+        data_type="schedule",
+        total=interest,
+        data_through=latest_payment_date(rows, period),
+        pending_charges=0,
+        interest=interest,
+        fees=0.0,
+        latest_closing=None,
+        apr=source.apr,
+        balance=None,
+        balance_missing=False,
+        elapsed_days=None,
+    )
 
 
 def _loan_line(

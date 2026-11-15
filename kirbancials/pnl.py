@@ -33,7 +33,16 @@ from kirbancials.overview import (
     recent_month_periods,
 )
 from kirbancials.periods import PERIOD_KEYS, PERIOD_LABELS, Period, format_period, period_choice, resolve_period
-from kirbancials.sources import expense_source_by_id, income_source_by_id
+from kirbancials.schedules import (
+    format_rate,
+    loan_snapshots,
+    resolve_loan_schedule,
+    rows_for_loan,
+    schedule_label,
+    schedule_payment_table,
+    snapshot_line,
+)
+from kirbancials.sources import expense_source_by_id, income_source_by_id, loan_id_from_schedule_source
 from kirbancials.spend import ExpenseLine, caveats, expense_lines, line_for_source_id, rows_for_line, total_income
 
 DETAIL_PAGE = "views/source_detail.py"
@@ -52,16 +61,19 @@ def render_profit_and_loss() -> None:
     deposits, income_error = _load_income()
     if income_error:
         st.error(income_error)
+    schedule, schedule_warning = resolve_loan_schedule()
+    if schedule_warning:
+        st.warning(schedule_warning)
     received = income_lines(deposits, period)
     income = total_income(deposits, period)
-    lines = expense_lines(transactions, monthly, period, balances)
+    lines = expense_lines(transactions, monthly, period, balances, schedule)
     expenses = sum(line.total for line in lines)
     net = net_profit(income, expenses)
     available_from = expense_data_start(transactions)
 
     _render_summary(income, expenses, net, period, available_from)
-    _render_snapshot(balances, deposits, today)
-    _render_trend(transactions, monthly, deposits, balances, today, available_from)
+    _render_snapshot(balances, deposits, today, schedule)
+    _render_trend(transactions, monthly, deposits, balances, today, available_from, schedule)
 
     st.divider()
     st.subheader("Income")
@@ -70,13 +82,19 @@ def render_profit_and_loss() -> None:
     _income_rows(received, period, income)
 
     st.subheader("Expenses")
-    card_lines = [line for line in lines if line.data_type != "loan"]
+    card_lines = [line for line in lines if line.data_type not in {"loan", "schedule"}]
     loan_lines = [line for line in lines if line.data_type == "loan"]
+    schedule_lines = [line for line in lines if line.data_type == "schedule"]
     _expense_rows(card_lines, period)
     if loan_lines:
         st.markdown("**Loan interest**")
         st.caption("Interest estimated from current balance and APR.")
         _expense_rows(loan_lines, period)
+    if schedule_lines:
+        if not loan_lines:
+            st.markdown("**Loan interest**")
+        st.caption("Scheduled interest. Principal is not an expense.")
+        _expense_rows(schedule_lines, period)
     total = st.columns([3, 2, 2])
     total[0].markdown("**Total expenses**")
     total[1].markdown(f"**{format_money(expenses)}**")
@@ -106,15 +124,19 @@ def render_source_detail() -> None:
     if sample:
         st.warning("Showing bundled sample data. These are fake round numbers, not your accounts.")
 
-    period = _period_selector()
+    today = date.today()
+    period = _period_selector(today)
     deposits, income_error = _load_income()
     if income_error:
         st.error(income_error)
+    schedule, schedule_warning = resolve_loan_schedule()
+    if schedule_warning:
+        st.warning(schedule_warning)
     if _is_income_source(source_id, deposits):
         _render_income_detail(source_id, deposits, period)
         return
 
-    line = line_for_source_id(source_id, transactions, monthly, period, balances)
+    line = line_for_source_id(source_id, transactions, monthly, period, balances, schedule)
     if line is None:
         st.write("That expense source was not found.")
         _back_link(period)
@@ -124,6 +146,9 @@ def render_source_detail() -> None:
     _back_link(period)
     if line.data_type == "loan":
         _render_loan_detail(line, transactions, period)
+        return
+    if line.data_type == "schedule":
+        _render_schedule_detail(line, schedule, period, today)
         return
     st.write(f"Total spend {format_money(line.total)}")
     if line.data_through is not None:
@@ -203,17 +228,31 @@ def _render_summary(
         st.caption(note)
 
 
-def _render_snapshot(balances: pd.DataFrame, deposits: pd.DataFrame, today: date) -> None:
+def _render_snapshot(
+    balances: pd.DataFrame,
+    deposits: pd.DataFrame,
+    today: date,
+    schedule: pd.DataFrame,
+) -> None:
     left, right = st.columns(2)
     with left.container(border=True):
         st.markdown("**Debt snapshot**")
         cards, interest = st.columns(2)
         cards.metric("Credit card balances", format_money(credit_card_balance_total(balances)))
+        snapshots = loan_snapshots(schedule, today)
+        help_text = "Estimated from the current balance and APR, for this month through today."
+        if snapshots:
+            help_text = (
+                "Estimated interest from the current balance and APR, "
+                "plus scheduled interest for payment dates in this month."
+            )
         interest.metric(
             "Est. loan interest this month",
-            format_money(estimated_loan_interest_this_month(balances, today)),
-            help="Estimated from the current balance and APR, for this month through today.",
+            format_money(estimated_loan_interest_this_month(balances, today, schedule)),
+            help=help_text,
         )
+        for item in snapshots:
+            st.write(snapshot_line(item))
     expected = expected_income_next_month(deposits, today)
     with right.container(border=True):
         st.markdown("**Expected income next month**")
@@ -229,6 +268,7 @@ def _render_trend(
     balances: pd.DataFrame,
     today: date,
     available_from: date | None,
+    schedule: pd.DataFrame | None = None,
 ) -> None:
     st.subheader("Income and expenses")
     st.caption("Last 6 months. The current month runs through today. Net is the line.")
@@ -236,7 +276,14 @@ def _render_trend(
     note = expense_coverage_note(months[0].start if months else None, available_from)
     if note:
         st.caption(note)
-    frame = income_expense_by_month(transactions, monthly, deposits, balances, today)
+    frame = income_expense_by_month(
+        transactions,
+        monthly,
+        deposits,
+        balances,
+        today,
+        schedule=schedule,
+    )
     chart = _income_expense_chart(frame)
     if chart is None:
         st.info("No income or expenses in the last 6 months.")
@@ -327,6 +374,8 @@ def _is_income_source(source_id: str, deposits: pd.DataFrame) -> bool:
     """
     if expense_source_by_id(source_id) is not None:
         return False
+    if loan_id_from_schedule_source(source_id) is not None:
+        return False
     if income_source_by_id(source_id) is not None:
         return True
     if deposits.empty or "Source" not in deposits.columns:
@@ -370,9 +419,45 @@ def _expense_rows(lines: list[ExpenseLine], period: Period) -> None:
 
 
 def loan_label_for(line: ExpenseLine) -> str:
+    if line.data_type == "schedule":
+        return schedule_label(line.name, line.apr)
     if line.data_type == "loan" and line.apr is not None:
         return f"{line.name} ({line.apr:.2f}% APR)"
     return line.name
+
+
+def _render_schedule_detail(
+    line: ExpenseLine,
+    schedule: pd.DataFrame,
+    period: Period,
+    today: date,
+) -> None:
+    loan_id = loan_id_from_schedule_source(line.source_id) or ""
+    rows = rows_for_loan(schedule, loan_id)
+    snapshots = [item for item in loan_snapshots(schedule, today) if item.source_id == line.source_id]
+    if line.apr is not None:
+        st.write(f"Rate {format_rate(line.apr)}%")
+    current = snapshots[0] if snapshots else None
+    if current is not None and current.collateral:
+        st.caption(f"Collateral: {current.collateral}")
+    if current is None:
+        st.write(f"Remaining balance {format_money(None)}")
+    else:
+        st.write(f"Remaining balance {format_money(current.balance)}")
+        if current.next_date is None or current.next_amount is None:
+            st.write("No further scheduled payments.")
+        else:
+            st.write(
+                f"Next payment {current.next_date.isoformat()} for {format_money(current.next_amount)}."
+            )
+    st.caption("Scheduled interest. Principal is not an expense.")
+    st.write(f"Scheduled interest this period {format_money(line.total)}")
+    payments = schedule_payment_table(rows, period)
+    st.subheader("Schedule")
+    if payments.empty:
+        st.info("No scheduled payments in this period.")
+        return
+    show_money_table(payments, ["Payment", "Interest", "Principal", "Remaining Balance"])
 
 
 def _render_loan_detail(line: ExpenseLine, transactions: pd.DataFrame, period: Period) -> None:

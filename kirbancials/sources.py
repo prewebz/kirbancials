@@ -7,6 +7,11 @@ profit-and-loss row.
 Add a cash-income row by appending one IncomeSource. Deposits come from
 FINANCE_INCOME_CSV, matched on Source. A Source id that is not listed here
 still becomes its own row, labeled with that raw id.
+
+Amortization-schedule loans are not listed in EXPENSE_SOURCES. Each Loan ID
+in FINANCE_LOAN_SCHEDULE_CSV becomes one ExpenseSource at runtime, with
+data_type "schedule", via scheduled_loan_source. When that variable is
+missing or blank, no schedule source is added.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from dataclasses import dataclass
 class ExpenseSource:
     id: str
     name: str
-    data_type: str  # "transactions", "statements", or "loan"
+    data_type: str  # "transactions", "statements", "loan", or "schedule"
     accounts: tuple[str, ...]
     apr: float | None = None
 
@@ -161,9 +166,25 @@ INCOME_SOURCES: tuple[IncomeSource, ...] = (
         name="MF3Distro",
         frequency="Irregular",
     ),
+    IncomeSource(
+        id="nexus_ffb_loan",
+        name="Nexus Academy - FFB loan cover",
+        frequency="Monthly",
+    ),
+    IncomeSource(
+        id="nexus_distributions",
+        name="Nexus Academy - Profit distributions",
+        frequency="Irregular",
+    ),
+    IncomeSource(
+        id="nexus_wc_loan",
+        name="Nexus Academy - Working capital loan repayment",
+        frequency="Irregular",
+    ),
 )
 
 UNMAPPED_PREFIX = "account:"
+SCHEDULE_SOURCE_PREFIX = "schedule:"
 
 
 def expense_source_by_id(source_id: str) -> ExpenseSource | None:
@@ -211,3 +232,30 @@ def account_from_unmapped_id(source_id: str) -> str | None:
         return None
     account = source_id[len(UNMAPPED_PREFIX) :]
     return account or None
+
+
+def schedule_source_id(loan_id: str) -> str:
+    return f"{SCHEDULE_SOURCE_PREFIX}{loan_id}"
+
+
+def loan_id_from_schedule_source(source_id: str) -> str | None:
+    if not source_id.startswith(SCHEDULE_SOURCE_PREFIX):
+        return None
+    loan_id = source_id[len(SCHEDULE_SOURCE_PREFIX) :]
+    return loan_id or None
+
+
+def scheduled_loan_source(loan_id: str, lender: str, loan_name: str, rate: float) -> ExpenseSource:
+    """One fixed schedule loan. The display name is `Lender - Loan Name`.
+
+    The rate suffix `(5.9% sched.)` is added when the row is labeled. The
+    loan is not part of EXPENSE_SOURCES, because the schedule arrives at
+    runtime and must be absent when the environment variable is unset.
+    """
+    return ExpenseSource(
+        id=schedule_source_id(loan_id),
+        name=f"{lender} - {loan_name}",
+        data_type="schedule",
+        accounts=(),
+        apr=rate,
+    )
