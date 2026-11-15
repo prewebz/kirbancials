@@ -10,7 +10,7 @@ import streamlit as st
 
 from kirbancials.activity import load_balances, load_transactions, resolve_balances, resolve_transactions
 from kirbancials.data import FinanceDataError, load_dataset, resolve_origin
-from kirbancials.formatting import format_money, show_money_table
+from kirbancials.formatting import format_money, format_signed_money, show_money_table
 from kirbancials.income import (
     IncomeLine,
     deposits_for_source,
@@ -214,7 +214,7 @@ def _render_summary(
     columns = st.columns(4)
     columns[0].metric("Total income", format_money(income), border=True)
     columns[1].metric("Total expenses", format_money(expenses), border=True)
-    columns[2].metric("Net", _colored_net(net), border=True)
+    columns[2].metric("Net", format_signed_money(net), border=True)
     columns[3].metric(
         "Monthly run rate",
         format_money(rate.amount),
@@ -339,15 +339,6 @@ def _income_expense_chart(frame: pd.DataFrame) -> alt.Chart | None:
     for layer in layers[1:]:
         chart = chart + layer
     return chart.resolve_scale(y="shared").properties(height=280)
-
-
-def _colored_net(net: float) -> str:
-    rendered = format_money(net)
-    if net > 0:
-        return f":green[{rendered}]"
-    if net < 0:
-        return f":red[{rendered}]"
-    return rendered
 
 
 def _income_rows(lines: list[IncomeLine], period: Period, income: float) -> None:

@@ -182,6 +182,17 @@ def scheduled_interest(rows: pd.DataFrame, period: Period) -> float:
     return float(chosen["interest"].sum())
 
 
+def scheduled_payments(rows: pd.DataFrame, period: Period) -> float:
+    """Sum Payment for payment dates in the period, including payment number 0.
+
+    This is cash paid, not the interest expense.
+    """
+    chosen = _in_period(rows, period)
+    if chosen.empty:
+        return 0.0
+    return float(chosen["payment"].sum())
+
+
 def latest_payment_date(rows: pd.DataFrame, period: Period) -> date | None:
     chosen = _in_period(rows, period)
     if chosen.empty:
