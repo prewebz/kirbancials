@@ -51,20 +51,54 @@ class IncomeRegistryTests(unittest.TestCase):
                 ("chipotle_nnn", "Chipotle NNN", "Monthly"),
                 ("waterleaf_pem", "Waterleaf Apts (PEM Residential)", "Quarterly"),
                 ("mf3distro", "MF3Distro", "Irregular"),
+                ("nexus_ffb_loan", "Nexus Academy - FFB loan cover", "Monthly"),
+                ("nexus_distributions", "Nexus Academy - Profit distributions", "Irregular"),
+                ("nexus_wc_loan", "Nexus Academy - Working capital loan repayment", "Irregular"),
             ],
         )
         chipotle = income_source_by_id("chipotle_nnn")
         waterleaf = income_source_by_id("waterleaf_pem")
         mf3distro = income_source_by_id("mf3distro")
+        ffb = income_source_by_id("nexus_ffb_loan")
+        distributions = income_source_by_id("nexus_distributions")
+        working_capital = income_source_by_id("nexus_wc_loan")
         self.assertIsNotNone(chipotle)
         self.assertIsNotNone(waterleaf)
         self.assertIsNotNone(mf3distro)
-        assert chipotle is not None and waterleaf is not None and mf3distro is not None
+        self.assertIsNotNone(ffb)
+        self.assertIsNotNone(distributions)
+        self.assertIsNotNone(working_capital)
+        assert (
+            chipotle is not None
+            and waterleaf is not None
+            and mf3distro is not None
+            and ffb is not None
+            and distributions is not None
+            and working_capital is not None
+        )
         self.assertEqual(chipotle.frequency, "Monthly")
         self.assertEqual(waterleaf.frequency, "Quarterly")
         self.assertEqual(mf3distro.frequency, "Irregular")
         self.assertEqual(mf3distro.name, "MF3Distro")
+        self.assertEqual(ffb.name, "Nexus Academy - FFB loan cover")
+        self.assertEqual(ffb.frequency, "Monthly")
+        self.assertEqual(distributions.name, "Nexus Academy - Profit distributions")
+        self.assertEqual(distributions.frequency, "Irregular")
+        self.assertEqual(working_capital.name, "Nexus Academy - Working capital loan repayment")
+        self.assertEqual(working_capital.frequency, "Irregular")
+        self.assertIsNone(income_source_by_id("nexus_academy"))
         self.assertIsNone(income_source_by_id("side_gig"))
+        shown = {
+            line.source_id: line
+            for line in income_lines(pd.DataFrame(), resolve_period("this-month", TODAY))
+        }
+        self.assertEqual(shown["nexus_ffb_loan"].label, "Nexus Academy - FFB loan cover (Monthly)")
+        self.assertEqual(shown["nexus_distributions"].label, "Nexus Academy - Profit distributions (Irregular)")
+        self.assertEqual(
+            shown["nexus_wc_loan"].label,
+            "Nexus Academy - Working capital loan repayment (Irregular)",
+        )
+        self.assertEqual(shown["nexus_ffb_loan"].total, 0.0)
 
 
 class IncomeParsingTests(unittest.TestCase):
@@ -121,9 +155,9 @@ class MissingIncomeEnvTests(unittest.TestCase):
         lines = income_lines(frame, period)
         self.assertEqual(
             [line.source_id for line in lines],
-            ["chipotle_nnn", "waterleaf_pem", "mf3distro"],
+            ["chipotle_nnn", "waterleaf_pem", "mf3distro", "nexus_ffb_loan", "nexus_distributions", "nexus_wc_loan"],
         )
-        self.assertEqual([line.total for line in lines], [0.0, 0.0, 0.0])
+        self.assertEqual([line.total for line in lines], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.assertEqual(total_income(frame, period), 0)
         self.assertEqual(total_income(), 0)
         self.assertEqual(income_for_source("chipotle_nnn"), 0)
@@ -173,7 +207,15 @@ class IncomePeriodTests(unittest.TestCase):
         lines = income_lines(deposits, period)
         self.assertEqual(
             [line.source_id for line in lines],
-            ["chipotle_nnn", "waterleaf_pem", "mf3distro", "side_gig"],
+            [
+                "chipotle_nnn",
+                "waterleaf_pem",
+                "mf3distro",
+                "nexus_ffb_loan",
+                "nexus_distributions",
+                "nexus_wc_loan",
+                "side_gig",
+            ],
         )
         unknown = lines[-1]
         self.assertEqual(unknown.name, "side_gig")

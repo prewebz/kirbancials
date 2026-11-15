@@ -14,9 +14,8 @@ from datetime import date, datetime
 import pandas as pd
 
 from kirbancials.income import total_received
-from kirbancials.loans import current_balance, elapsed_days, estimated_interest
 from kirbancials.periods import Period, add_months, resolve_period
-from kirbancials.sources import EXPENSE_SOURCES, INCOME_SOURCES, IncomeSource, loan_accounts
+from kirbancials.sources import INCOME_SOURCES, IncomeSource, loan_accounts
 from kirbancials.spend import expense_lines
 
 CHART_MONTHS = 6
@@ -110,23 +109,20 @@ def credit_card_balance_total(balances: pd.DataFrame | None) -> float:
     return float(amounts.sum())
 
 
-def estimated_loan_interest_this_month(balances: pd.DataFrame | None, today: date) -> float:
-    """Estimated loan interest from the first of this month through today.
+def estimated_loan_interest_this_month(
+    balances: pd.DataFrame | None,
+    today: date,
+    schedule: pd.DataFrame | None = None,
+) -> float:
+    """Loan interest from the first of this month through today.
 
-    Uses the same balance, APR, and elapsed-day formula as the profit and loss
-    loan rows for the This month period.
+    Estimated rows use the current balance and APR. Scheduled rows add the
+    Interest of payments dated in this month. Both come from expense_lines,
+    which is the same total the profit and loss page uses.
     """
     period = resolve_period("this-month", today)
-    days = elapsed_days(period)
-    total = 0.0
-    for source in EXPENSE_SOURCES:
-        if source.data_type != "loan":
-            continue
-        account = source.accounts[0] if source.accounts else ""
-        apr = source.apr if source.apr is not None else 0.0
-        balance, _as_of = current_balance(balances, account)
-        total += estimated_interest(balance, apr, days)
-    return total
+    lines = expense_lines(pd.DataFrame(), pd.DataFrame(), period, balances, schedule)
+    return sum(line.total for line in lines if line.data_type in {"loan", "schedule"})
 
 
 def expected_income_next_month(
@@ -206,6 +202,7 @@ def income_expense_by_month(
     balances: pd.DataFrame | None,
     today: date,
     count: int = CHART_MONTHS,
+    schedule: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Income, expenses, and net for each of the last `count` months.
 
@@ -216,7 +213,9 @@ def income_expense_by_month(
     rows: list[dict[str, object]] = []
     for period in recent_month_periods(today, count):
         income = total_received(deposits, period)
-        expenses = sum(line.total for line in expense_lines(transactions, monthly, period, balances))
+        expenses = sum(
+            line.total for line in expense_lines(transactions, monthly, period, balances, schedule)
+        )
         end = period.end
         outside = available is not None and end is not None and end < available
         if outside and expenses == 0:

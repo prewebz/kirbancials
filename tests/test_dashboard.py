@@ -216,6 +216,32 @@ d,2026-11-13,rent,After the sample today,9999
         self.assertAlmostEqual(expected.total, 1100)
         self.assertEqual(expected.note, "")
 
+    def test_nexus_sources_use_frequency_and_the_last_deposit(self) -> None:
+        deposits = _deposits(
+            """Transaction ID,Date,Source,Description,Amount
+ffb,2026-11-02,nexus_ffb_loan,Sample cover,100
+ffb-later,2026-11-20,nexus_ffb_loan,After today,9999
+dist,2026-11-03,nexus_distributions,Left out,50
+wc,2026-11-04,nexus_wc_loan,Also left out,80
+"""
+        )
+        expected = expected_income_next_month(deposits, TODAY)
+        self.assertAlmostEqual(expected.total, 100)
+        self.assertEqual(
+            expected.irregular_names,
+            (
+                "MF3Distro",
+                "Nexus Academy - Profit distributions",
+                "Nexus Academy - Working capital loan repayment",
+            ),
+        )
+        self.assertEqual(
+            expected.note,
+            "Irregular excluded: MF3Distro, "
+            "Nexus Academy - Profit distributions, "
+            "Nexus Academy - Working capital loan repayment",
+        )
+
     def test_missing_payments_are_zero(self) -> None:
         expected = expected_income_next_month(pd.DataFrame(), TODAY, SOURCES)
         self.assertEqual(expected.total, 0)
