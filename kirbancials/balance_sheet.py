@@ -23,6 +23,12 @@ from kirbancials.activity import (
     resolve_balances,
 )
 from kirbancials.assets import NO_ASSETS_NOTE, AssetLoad, AssetRecord, resolve_assets
+from kirbancials.auth import (
+    BALANCE_SHEET_PASSWORD_MISSING,
+    attempt_balance_sheet_unlock,
+    balance_sheet_gate,
+    lock_balance_sheet,
+)
 from kirbancials.data import FinanceDataError
 from kirbancials.formatting import format_money, format_signed_money
 from kirbancials.income import load_income, received_for_source, resolve_income
@@ -53,6 +59,10 @@ VALUATION_NOTE = (
 )
 CASH_NOTE = "No checking or savings accounts are labeled in the balance file."
 NA = "n/a"
+VALUE_APPRAISAL = "appraisal"
+VALUE_CAP_RATE = "cap-rate"
+APPRAISAL_LABEL = "Appraisal"
+CAP_RATE_LABEL = "Cap-rate estimate"
 
 
 @dataclass(frozen=True)
@@ -67,6 +77,12 @@ class AssetPosition:
     market_value: float | None
     valuation_date: date | None
     valuation_source: str
+    cap_rate: float | None
+    cap_rate_source: str
+    cap_rate_date: date | None
+    estimated_value: float | None
+    estimate_vs_appraisal: float | None
+    carrying_value: float | None
     cost_basis: float | None
     gain_loss: float | None
     loan_linked: bool
@@ -117,6 +133,21 @@ def show_percent(value: float | None) -> str:
     return f"{value * 100:.2f}%"
 
 
+def format_cap_rate(value: float | None) -> str:
+    """A cap rate stored as a percent, such as 5.25 for 5.25%."""
+    if value is None:
+        return NA
+    text = f"{round(float(value), 4):.4f}".rstrip("0").rstrip(".")
+    return f"{text or '0'}%"
+
+
+def carrying_value(market: float | None, estimate: float | None, basis: str) -> float | None:
+    """Appraisal, or the cap-rate estimate when that basis is selected and one exists."""
+    if basis == VALUE_CAP_RATE and estimate is not None:
+        return estimate
+    return market
+
+
 def build_balance_sheet(
     assets: Sequence[AssetRecord],
     balances: pd.DataFrame | None,
@@ -126,6 +157,7 @@ def build_balance_sheet(
     *,
     assets_configured: bool,
     income_configured: bool,
+    value_basis: str = VALUE_APPRAISAL,
 ) -> BalanceSheet:
     """Assemble totals and both tables for `today`.
 
@@ -136,11 +168,13 @@ def build_balance_sheet(
     period = resolve_period("last-12-months", today)
     identities = _scheduled_identity_keys(schedule)
     cash, other_loans, cards = _split_balances(balances, identities)
+    basis = value_basis if value_basis == VALUE_CAP_RATE else VALUE_APPRAISAL
     positions = tuple(
-        _position(asset, schedule, deposits, today, period, income_configured) for asset in assets
+        _position(asset, schedule, deposits, today, period, income_configured, basis)
+        for asset in assets
     )
     cash_total = _sum_amounts(cash)
-    market_total = _sum_known(position.market_value for position in positions)
+    market_total = _sum_known(position.carrying_value for position in positions)
     mortgage_total = scheduled_balance_total(loan_snapshots(schedule, today))
     total_assets = cash_total + market_total
     total_liabilities = mortgage_total + _sum_amounts(other_loans) + _sum_amounts(cards)
@@ -159,8 +193,53 @@ def build_balance_sheet(
 
 
 def render_balance_sheet() -> None:
-    """Draw the balance sheet. Login has already run in the entrypoint."""
+    """Draw the balance sheet. Login has already run in the entrypoint.
+
+    Finance files are read only after the balance sheet password unlocks the
+    page. An unset password stays locked.
+    """
+    status = balance_sheet_gate(st.session_state)
+    if status == "unconfigured":
+        st.error(BALANCE_SHEET_PASSWORD_MISSING)
+        return
+    if status != "open":
+        _render_balance_sheet_prompt()
+        return
+    if st.button("Lock balance sheet", key="lock_balance_sheet_page"):
+        lock_balance_sheet(st.session_state)
+        st.rerun()
+    _render_unlocked()
+
+
+def _render_balance_sheet_prompt() -> None:
+    """Ask for the balance sheet password. Does not read finance files."""
+    st.caption("This page has its own password.")
+    with st.form("balance_sheet_unlock"):
+        entered = st.text_input("Balance sheet password", type="password")
+        submitted = st.form_submit_button("Unlock")
+    if submitted:
+        message = attempt_balance_sheet_unlock(st.session_state, entered)
+        if message is None:
+            st.rerun()
+        st.error(message)
+
+
+def _render_unlocked() -> None:
     today = date.today()
+    st.caption(f"As of {today.isoformat()}")
+    choice = st.radio(
+        "Value assets at:",
+        [APPRAISAL_LABEL, CAP_RATE_LABEL],
+        horizontal=True,
+        index=0,
+        key="asset_value_basis",
+    )
+    basis = VALUE_CAP_RATE if choice == CAP_RATE_LABEL else VALUE_APPRAISAL
+    if basis == VALUE_CAP_RATE:
+        st.caption(
+            "Totals, equity, and LTV use the cap-rate estimate where one is entered. "
+            "Assets without an estimate stay at the appraisal."
+        )
     asset_load = resolve_assets()
     balances, balance_error, balance_sample = _load_balance_rows()
     deposits, income_error, income_configured = _load_deposits()
@@ -173,8 +252,17 @@ def render_balance_sheet() -> None:
         today,
         assets_configured=asset_load.configured,
         income_configured=income_configured,
+        value_basis=basis,
     )
-    _render(sheet, asset_load, balance_error, balance_sample, income_error, schedule_warning, balances)
+    _render(
+        sheet,
+        asset_load,
+        balance_error,
+        balance_sample,
+        income_error,
+        schedule_warning,
+        balances,
+    )
 
 
 def _render(
@@ -186,7 +274,6 @@ def _render(
     schedule_warning: str | None,
     balances: pd.DataFrame,
 ) -> None:
-    st.caption(f"As of {sheet.as_of.isoformat()}")
     if asset_load.warning:
         st.warning(asset_load.warning)
     if balance_sample:
@@ -207,9 +294,9 @@ def _render(
 
     st.subheader("Real Estate / investments")
     st.caption(
-        "Equity is the market value minus the linked loan. "
-        "LTV is the loan divided by the market value. "
-        "Yield is trailing-12-month income divided by the market value. "
+        "Equity is the selected value minus the linked loan. "
+        "LTV is the loan divided by that value. "
+        "Yield is trailing-12-month income divided by the appraisal. "
         "Cash on equity is that income, minus trailing-12-month loan payments, divided by equity."
     )
     if sheet.positions:
@@ -243,16 +330,36 @@ def _render_position(position: AssetPosition) -> None:
             st.caption(" · ".join(details))
         valued = position.valuation_date.isoformat() if position.valuation_date is not None else NA
         source = position.valuation_source or NA
-        first = st.columns(3)
-        first[0].metric(
-            "Market value",
-            show_money(position.market_value),
-            delta=f"{valued} · {source}",
-            delta_color="off",
-            delta_arrow="off",
-        )
-        first[1].metric("Cost basis", show_money(position.cost_basis))
-        first[2].metric("Gain / loss", show_money(position.gain_loss))
+        if _has_cap_rate_estimate(position):
+            value_row = st.columns(2)
+            value_row[0].metric(
+                "Market value",
+                show_money(position.market_value),
+                delta=f"{valued} · {source}",
+                delta_color="off",
+                delta_arrow="off",
+            )
+            value_row[1].metric(
+                "Est. market value (cap rate)",
+                show_money(position.estimated_value),
+                delta=_estimate_delta(position),
+                delta_color="off",
+                delta_arrow="off",
+            )
+            cost_row = st.columns(2)
+            cost_row[0].metric("Cost basis", show_money(position.cost_basis))
+            cost_row[1].metric("Gain / loss", show_money(position.gain_loss))
+        else:
+            first = st.columns(3)
+            first[0].metric(
+                "Market value",
+                show_money(position.market_value),
+                delta=f"{valued} · {source}",
+                delta_color="off",
+                delta_arrow="off",
+            )
+            first[1].metric("Cost basis", show_money(position.cost_basis))
+            first[2].metric("Gain / loss", show_money(position.gain_loss))
         second = st.columns(3)
         loan_delta = {}
         if position.loan_name:
@@ -306,6 +413,7 @@ def _position(
     today: date,
     period: Period,
     income_configured: bool,
+    basis: str,
 ) -> AssetPosition:
     loan_linked = asset.linked_loan_id != ""
     loan_name = ""
@@ -323,14 +431,19 @@ def _position(
             loan_balance = remaining_balance(rows, today)
             loan_found = loan_balance is not None
             t12_payments = scheduled_payments(rows, period)
-    if asset.market_value is None:
+    value = carrying_value(asset.market_value, asset.estimated_value, basis)
+    if value is None:
         equity = None
     elif loan_linked and not loan_found:
         equity = None
     elif loan_linked:
-        equity = asset.market_value - float(loan_balance)
+        equity = value - float(loan_balance)
     else:
-        equity = asset.market_value
+        equity = value
+    if asset.estimated_value is None or asset.market_value is None:
+        estimate_gap = None
+    else:
+        estimate_gap = asset.estimated_value - asset.market_value
     if asset.market_value is None or asset.cost_basis is None:
         gain = None
     else:
@@ -355,6 +468,12 @@ def _position(
         market_value=asset.market_value,
         valuation_date=asset.valuation_date,
         valuation_source=asset.valuation_source,
+        cap_rate=asset.cap_rate,
+        cap_rate_source=asset.cap_rate_source,
+        cap_rate_date=asset.cap_rate_date,
+        estimated_value=asset.estimated_value,
+        estimate_vs_appraisal=estimate_gap,
+        carrying_value=value,
         cost_basis=asset.cost_basis,
         gain_loss=gain,
         loan_linked=loan_linked,
@@ -362,7 +481,7 @@ def _position(
         loan_name=loan_name,
         loan_balance=loan_balance,
         equity=equity,
-        ltv=_ratio(loan_balance, asset.market_value),
+        ltv=_ratio(loan_balance, value),
         income_source_id=asset.income_source_id,
         income_name=income_name,
         t12_income=t12_income,
@@ -437,7 +556,7 @@ def _asset_rows(
             grouped[position.category] = []
             order.append(position.category)
         grouped[position.category].append(
-            SheetRow(position.category, position.name, position.market_value, "item")
+            SheetRow(position.category, position.name, position.carrying_value, "item")
         )
     for category in order:
         rows.extend(_with_subtotal(category, grouped[category]))
@@ -479,6 +598,24 @@ def _sum_amounts(rows: Sequence[SheetRow]) -> float:
 
 def _sum_known(values: Sequence[float | None]) -> float:
     return float(sum(value for value in values if value is not None))
+
+
+def _has_cap_rate_estimate(position: AssetPosition) -> bool:
+    return (
+        position.estimated_value is not None
+        or position.cap_rate is not None
+        or position.cap_rate_source != ""
+        or position.cap_rate_date is not None
+    )
+
+
+def _estimate_delta(position: AssetPosition) -> str:
+    when = position.cap_rate_date.isoformat() if position.cap_rate_date is not None else NA
+    source = position.cap_rate_source or NA
+    return (
+        f"{format_cap_rate(position.cap_rate)} · {source} · {when} · "
+        f"{show_money(position.estimate_vs_appraisal)} vs appraisal"
+    )
 
 
 def _ratio(numerator: float | None, denominator: float | None) -> float | None:

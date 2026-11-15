@@ -22,7 +22,7 @@ from kirbancials.data import FinanceDataError
 
 ASSETS_ENV = "FINANCE_ASSETS_CSV"
 
-ASSET_COLUMNS = [
+REQUIRED_ASSET_COLUMNS = [
     "Asset ID",
     "Asset Name",
     "Category",
@@ -36,6 +36,15 @@ ASSET_COLUMNS = [
     "Notes",
 ]
 
+# Optional, and always appended after the required columns. Older files omit them.
+OPTIONAL_ASSET_COLUMNS = [
+    "Market Cap Rate",
+    "Cap Rate Source",
+    "Cap Rate Date",
+    "Estimated Value",
+]
+
+ASSET_COLUMNS = [*REQUIRED_ASSET_COLUMNS, *OPTIONAL_ASSET_COLUMNS]
 ASSET_HEADER = ",".join(ASSET_COLUMNS)
 
 NO_ASSETS_NOTE = "No assets are configured."
@@ -62,6 +71,10 @@ class AssetRecord:
     linked_loan_id: str
     income_source_id: str
     notes: str
+    cap_rate: float | None = None
+    cap_rate_source: str = ""
+    cap_rate_date: date | None = None
+    estimated_value: float | None = None
 
 
 @dataclass(frozen=True)
@@ -101,10 +114,11 @@ def parse_assets(text: str) -> list[AssetRecord]:
     except pd.errors.ParserError as exc:
         raise FinanceDataError(_UNPARSED) from exc
     frame.columns = [str(column).strip() for column in frame.columns]
-    missing = [column for column in ASSET_COLUMNS if column not in frame.columns]
+    missing = [column for column in REQUIRED_ASSET_COLUMNS if column not in frame.columns]
     if missing:
         raise FinanceDataError(_MISSING_COLUMN)
-    chosen = frame.loc[:, ASSET_COLUMNS]
+    present = [column for column in OPTIONAL_ASSET_COLUMNS if column in frame.columns]
+    chosen = frame.loc[:, [*REQUIRED_ASSET_COLUMNS, *present]]
     records: list[AssetRecord] = []
     seen: set[str] = set()
     for raw in chosen.to_dict("records"):
@@ -119,7 +133,8 @@ def parse_assets(text: str) -> list[AssetRecord]:
 
 
 def _blank_row(raw: Mapping[str, object]) -> bool:
-    return all(str(raw.get(column, "")).strip() == "" for column in ASSET_COLUMNS)
+    columns = [*REQUIRED_ASSET_COLUMNS, *[column for column in OPTIONAL_ASSET_COLUMNS if column in raw]]
+    return all(_optional_text(raw.get(column, "")) == "" for column in columns)
 
 
 def _parse_record(raw: Mapping[str, object]) -> AssetRecord | None:
@@ -132,7 +147,10 @@ def _parse_record(raw: Mapping[str, object]) -> AssetRecord | None:
     cost, cost_ok = _optional_decimal(raw.get("Cost Basis"))
     market, market_ok = _optional_decimal(raw.get("Market Value"))
     valued, valued_ok = _optional_date(raw.get("Valuation Date"))
-    if not (acquired_ok and cost_ok and market_ok and valued_ok):
+    cap_rate, cap_ok = _optional_decimal(raw.get("Market Cap Rate"))
+    cap_date, cap_date_ok = _optional_date(raw.get("Cap Rate Date"))
+    estimate, estimate_ok = _optional_decimal(raw.get("Estimated Value"))
+    if not (acquired_ok and cost_ok and market_ok and valued_ok and cap_ok and cap_date_ok and estimate_ok):
         return None
     return AssetRecord(
         asset_id=asset_id,
@@ -146,6 +164,10 @@ def _parse_record(raw: Mapping[str, object]) -> AssetRecord | None:
         linked_loan_id=_optional_text(raw.get("Linked Loan ID")),
         income_source_id=_optional_text(raw.get("Income Source ID")),
         notes=_optional_text(raw.get("Notes")),
+        cap_rate=cap_rate,
+        cap_rate_source=_optional_text(raw.get("Cap Rate Source")),
+        cap_rate_date=cap_date,
+        estimated_value=estimate,
     )
 
 
@@ -157,6 +179,11 @@ def _required_text(value: object) -> str | None:
 def _optional_text(value: object) -> str:
     if value is None:
         return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        return str(value).strip()
     return str(value).strip()
 
 
