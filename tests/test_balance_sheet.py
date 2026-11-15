@@ -9,7 +9,25 @@ from pathlib import Path
 import pandas as pd
 
 from kirbancials.activity import load_balances, resolve_balances
-from kirbancials.assets import ASSET_HEADER, ASSETS_ENV, NO_ASSETS_NOTE, resolve_assets
+from kirbancials.assets import (
+    ASSET_HEADER,
+    ASSETS_ENV,
+    NO_ASSETS_NOTE,
+    REQUIRED_ASSET_COLUMNS,
+    resolve_assets,
+)
+from kirbancials.auth import (
+    AUTHENTICATED,
+    BALANCE_SHEET_PASSWORD_ENV,
+    BALANCE_SHEET_PASSWORD_MISSING,
+    BALANCE_SHEET_UNLOCKED,
+    INCORRECT_PASSWORD,
+    attempt_balance_sheet_unlock,
+    balance_sheet_gate,
+    end_session,
+    is_balance_sheet_unlocked,
+    lock_balance_sheet,
+)
 from kirbancials.balance_sheet import (
     CASH_GROUP,
     CASH_NOTE,
@@ -17,8 +35,10 @@ from kirbancials.balance_sheet import (
     MORTGAGE_GROUP,
     OTHER_LOAN_GROUP,
     TOTAL_GROUP,
+    VALUE_CAP_RATE,
     VALUATION_NOTE,
     build_balance_sheet,
+    format_cap_rate,
     show_money,
     show_percent,
 )
@@ -38,7 +58,8 @@ from kirbancials.schedules import (
 TODAY = date(2026, 11, 12)
 ROOT = Path(__file__).resolve().parents[1]
 
-ASSETS = f"""{ASSET_HEADER}
+LEGACY_HEADER = ",".join(REQUIRED_ASSET_COLUMNS)
+ASSETS = f"""{LEGACY_HEADER}
 shop-1,Sample Shop,Real Estate,2020-01-15,80.00,100.00,2026-06-01,Sample appraisal,loan-1,chipotle_nnn,Fake note
 note-1,Sample IOU,Note Receivable,2024-03-01,10.00,15.00,2026-01-01,Sample statement,,,
 inv-1,Sample Fund,Investment,2023-05-01,10.00,,,,,,
@@ -102,6 +123,7 @@ def _sheet(
     income_configured: bool = True,
     balances: pd.DataFrame | None = None,
     schedule: pd.DataFrame | None = None,
+    value_basis: str = "appraisal",
 ):
     if assets_text is None:
         loaded = resolve_assets({})
@@ -116,6 +138,7 @@ def _sheet(
         TODAY,
         assets_configured=configured,
         income_configured=income_configured,
+        value_basis=value_basis,
     )
 
 
@@ -135,7 +158,8 @@ class AssetFileTests(unittest.TestCase):
         self.assertEqual(
             ASSET_HEADER,
             "Asset ID,Asset Name,Category,Acquired Date,Cost Basis,Market Value,"
-            "Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes",
+            "Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes,"
+            "Market Cap Rate,Cap Rate Source,Cap Rate Date,Estimated Value",
         )
         self.assertEqual(
             NO_ASSETS_NOTE,
@@ -402,6 +426,192 @@ class BalanceSheetTests(unittest.TestCase):
         self.assertAlmostEqual(sheet.net_worth, 100)
         self.assertEqual(format_signed_money(sheet.net_worth), ":green[$100.00]")
         self.assertEqual(format_signed_money(0), "$0.00")
+
+
+CAP_ASSETS = f"""{ASSET_HEADER}
+shop-1,Sample Shop,Real Estate,2020-01-15,80.00,100.00,2026-06-01,Sample appraisal,loan-1,chipotle_nnn,Fake note,5.25,Sample broker,2026-06-01,130.00
+note-1,Sample IOU,Note Receivable,2024-03-01,10.00,15.00,2026-01-01,Sample statement,,,,,,,
+"""
+
+
+class CapRateTests(unittest.TestCase):
+    def test_legacy_header_still_parses(self) -> None:
+        loaded = resolve_assets({ASSETS_ENV: ASSETS})
+        self.assertIsNone(loaded.warning)
+        shop = loaded.assets[0]
+        self.assertIsNone(shop.cap_rate)
+        self.assertEqual(shop.cap_rate_source, "")
+        self.assertIsNone(shop.cap_rate_date)
+        self.assertIsNone(shop.estimated_value)
+        self.assertEqual(LEGACY_HEADER.split(","), REQUIRED_ASSET_COLUMNS)
+
+    def test_optional_columns_parse_and_a_bad_value_hides_the_cell(self) -> None:
+        loaded = resolve_assets({ASSETS_ENV: CAP_ASSETS})
+        self.assertIsNone(loaded.warning)
+        shop = loaded.assets[0]
+        self.assertAlmostEqual(shop.cap_rate or 0, 5.25)
+        self.assertEqual(shop.cap_rate_source, "Sample broker")
+        self.assertEqual(shop.cap_rate_date, date(2026, 6, 1))
+        self.assertAlmostEqual(shop.estimated_value or 0, 130)
+        self.assertIsNone(loaded.assets[1].estimated_value)
+        self.assertEqual(format_cap_rate(shop.cap_rate), "5.25%")
+        self.assertEqual(format_cap_rate(None), "n/a")
+
+        secret = "SECRET-CAP-RATE"
+        bad = (
+            ASSET_HEADER
+            + f"\nshop-1,Sample Shop,Real Estate,2020-01-15,80,100,2026-06-01,Appraisal,loan-1,,note,5.25%,{secret},2026-06-01,130\n"
+        )
+        failed = resolve_assets({ASSETS_ENV: bad})
+        self.assertIsNotNone(failed.warning)
+        self.assertNotIn(secret, failed.warning or "")
+        self.assertEqual(failed.assets, ())
+
+    def test_default_totals_stay_on_the_appraisal(self) -> None:
+        sheet = _sheet(CAP_ASSETS)
+        shop = _position(sheet, "shop-1")
+        note = _position(sheet, "note-1")
+        self.assertAlmostEqual(shop.carrying_value or 0, 100)
+        self.assertAlmostEqual(shop.estimate_vs_appraisal or 0, 30)
+        self.assertAlmostEqual(shop.equity or 0, 40)
+        self.assertAlmostEqual(shop.ltv or 0, 0.6)
+        self.assertAlmostEqual(shop.gain_loss or 0, 20)
+        self.assertAlmostEqual(shop.yield_on_value or 0, 0.3)
+        self.assertAlmostEqual(note.carrying_value or 0, 15)
+        self.assertIsNone(note.estimate_vs_appraisal)
+        # Cash 40 plus appraisals 100 and 15. The 130 estimate is not in the total.
+        self.assertAlmostEqual(sheet.total_assets, 155)
+        self.assertAlmostEqual(sheet.net_worth, 155 - 312)
+        shop_row = next(row for row in sheet.asset_rows if row.item == "Sample Shop" and row.role == "item")
+        self.assertAlmostEqual(shop_row.amount or 0, 100)
+
+    def test_cap_rate_basis_switches_totals_equity_and_ltv_where_an_estimate_exists(self) -> None:
+        sheet = _sheet(CAP_ASSETS, value_basis=VALUE_CAP_RATE)
+        shop = _position(sheet, "shop-1")
+        note = _position(sheet, "note-1")
+        self.assertAlmostEqual(shop.carrying_value or 0, 130)
+        self.assertAlmostEqual(shop.equity or 0, 70)
+        self.assertAlmostEqual(shop.ltv or 0, 60 / 130)
+        self.assertAlmostEqual(shop.market_value or 0, 100)
+        self.assertAlmostEqual(shop.gain_loss or 0, 20)
+        self.assertAlmostEqual(shop.yield_on_value or 0, 0.3)
+        self.assertAlmostEqual(shop.cash_on_equity or 0, 20 / 70)
+        self.assertAlmostEqual(note.carrying_value or 0, 15)
+        self.assertAlmostEqual(note.equity or 0, 15)
+        self.assertAlmostEqual(sheet.total_assets, 185)
+        self.assertAlmostEqual(sheet.total_liabilities, 312)
+        self.assertAlmostEqual(sheet.net_worth, 185 - 312)
+        shop_row = next(row for row in sheet.asset_rows if row.item == "Sample Shop" and row.role == "item")
+        self.assertAlmostEqual(shop_row.amount or 0, 130)
+
+
+class BalanceSheetLockTests(unittest.TestCase):
+    def test_locked_by_default(self) -> None:
+        session: dict[str, object] = {}
+        self.assertFalse(is_balance_sheet_unlocked(session))
+        self.assertEqual(
+            balance_sheet_gate(session, {BALANCE_SHEET_PASSWORD_ENV: "owner-secret"}),
+            "locked",
+        )
+
+    def test_wrong_password_stays_locked_and_hides_the_secret(self) -> None:
+        session: dict[str, object] = {}
+        secret = "owner-secret"
+        wrong = "wrong-secret-value"
+        message = attempt_balance_sheet_unlock(
+            session,
+            wrong,
+            {BALANCE_SHEET_PASSWORD_ENV: secret},
+        )
+        self.assertEqual(message, INCORRECT_PASSWORD)
+        self.assertEqual(message, "Incorrect password.")
+        self.assertNotIn(wrong, message or "")
+        self.assertNotIn(secret, message or "")
+        self.assertFalse(is_balance_sheet_unlocked(session))
+        self.assertNotIn(secret, session.values())
+        self.assertNotIn(wrong, session.values())
+
+    def test_right_password_unlocks_for_the_session(self) -> None:
+        session: dict[str, object] = {}
+        secret = "owner-secret"
+        message = attempt_balance_sheet_unlock(
+            session,
+            secret,
+            {BALANCE_SHEET_PASSWORD_ENV: secret},
+        )
+        self.assertIsNone(message)
+        self.assertTrue(is_balance_sheet_unlocked(session))
+        self.assertEqual(
+            balance_sheet_gate(session, {BALANCE_SHEET_PASSWORD_ENV: secret}),
+            "open",
+        )
+
+    def test_unset_password_fails_closed(self) -> None:
+        for env in ({}, {BALANCE_SHEET_PASSWORD_ENV: ""}, {BALANCE_SHEET_PASSWORD_ENV: "   \n"}):
+            session: dict[str, object] = {BALANCE_SHEET_UNLOCKED: True}
+            self.assertEqual(balance_sheet_gate(session, env), "unconfigured")
+            self.assertIs(session[BALANCE_SHEET_UNLOCKED], False)
+            provided = "anything-entered"
+            message = attempt_balance_sheet_unlock(session, provided, env)
+            self.assertEqual(message, BALANCE_SHEET_PASSWORD_MISSING)
+            self.assertEqual(message, "Balance Sheet password not set yet.")
+            self.assertNotIn(provided, message or "")
+            self.assertFalse(is_balance_sheet_unlocked(session))
+
+    def test_logout_relocks_and_the_lock_button_clears_only_the_sheet(self) -> None:
+        session: dict[str, object] = {AUTHENTICATED: True, BALANCE_SHEET_UNLOCKED: True}
+        end_session(session)
+        self.assertIs(session[AUTHENTICATED], False)
+        self.assertIs(session[BALANCE_SHEET_UNLOCKED], False)
+
+        still_in = {AUTHENTICATED: True, BALANCE_SHEET_UNLOCKED: True}
+        lock_balance_sheet(still_in)
+        self.assertIs(still_in[AUTHENTICATED], True)
+        self.assertIs(still_in[BALANCE_SHEET_UNLOCKED], False)
+
+        app = (ROOT / "app.py").read_text()
+        self.assertIn("end_session", app)
+        self.assertIn("Lock balance sheet", app)
+        page = (ROOT / "kirbancials" / "balance_sheet.py").read_text()
+        self.assertIn('type="password"', page)
+        self.assertIn("Lock balance sheet", page)
+        prompt = page.split("def _render_balance_sheet_prompt", 1)[1].split("def _render_unlocked", 1)[0]
+        self.assertNotIn("resolve_assets", prompt)
+        self.assertNotIn("resolve_balances", prompt)
+        self.assertNotIn("resolve_loan_schedule", prompt)
+        unlocked = page.split("def _render_unlocked", 1)[1]
+        self.assertLess(unlocked.index("st.radio"), unlocked.index("resolve_assets()"))
+
+    def test_locked_page_does_not_load_or_render_figures(self) -> None:
+        import os
+        from unittest.mock import patch
+
+        from streamlit.testing.v1 import AppTest
+
+        saved = os.environ.get(BALANCE_SHEET_PASSWORD_ENV)
+        os.environ.pop(BALANCE_SHEET_PASSWORD_ENV, None)
+        try:
+            with (
+                patch("kirbancials.balance_sheet.resolve_assets", side_effect=AssertionError("assets loaded")),
+                patch("kirbancials.balance_sheet.resolve_balances", side_effect=AssertionError("balances loaded")),
+                patch("kirbancials.balance_sheet.resolve_income", side_effect=AssertionError("income loaded")),
+                patch("kirbancials.balance_sheet.resolve_loan_schedule", side_effect=AssertionError("schedule loaded")),
+            ):
+                screen = AppTest.from_file(str(ROOT / "views" / "balance_sheet.py"), default_timeout=30)
+                screen.run()
+            self.assertEqual(list(screen.exception), [])
+            shown = " ".join(
+                getattr(item, "value", "")
+                for item in (*screen.error, *screen.caption, *screen.markdown, *screen.metric)
+            )
+            self.assertIn("Balance Sheet password not set yet.", shown)
+            self.assertNotIn("Sample Shop", shown)
+            self.assertNotIn("$", shown)
+        finally:
+            if saved is None:
+                os.environ.pop(BALANCE_SHEET_PASSWORD_ENV, None)
+            else:
+                os.environ[BALANCE_SHEET_PASSWORD_ENV] = saved
 
 
 class NavigationTests(unittest.TestCase):

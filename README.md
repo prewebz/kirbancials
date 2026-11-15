@@ -15,10 +15,11 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 export APP_PASSWORD='choose-a-password'
+export BALANCE_SHEET_PASSWORD='choose-another-password'
 streamlit run app.py
 ```
 
-Open the URL Streamlit prints and log in with that password. Log out from the sidebar.
+Open the URL Streamlit prints and log in with `APP_PASSWORD`. Log out from the sidebar. The Balance Sheet asks for `BALANCE_SHEET_PASSWORD` after that. Leave that variable unset and the Balance Sheet stays locked.
 
 If `APP_PASSWORD` is unset, the app shows an error and stops. It does not render balances, charts, or tables until the password matches. The comparison uses `hmac.compare_digest`.
 
@@ -138,7 +139,9 @@ The Balance Sheet reads manually entered assets from `FINANCE_ASSETS_CSV`: the r
 
 The header row is exactly:
 
-`Asset ID,Asset Name,Category,Acquired Date,Cost Basis,Market Value,Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes`
+`Asset ID,Asset Name,Category,Acquired Date,Cost Basis,Market Value,Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes,Market Cap Rate,Cap Rate Source,Cap Rate Date,Estimated Value`
+
+The last four columns are optional. A file that stops at `Notes` still loads. A blank optional cell is left out.
 
 | Column | Role |
 | --- | --- |
@@ -153,18 +156,28 @@ The header row is exactly:
 | Linked Loan ID | `Loan ID` from `FINANCE_LOAN_SCHEDULE_CSV`. Blank when nothing is linked. |
 | Income Source ID | Income source id, such as `chipotle_nnn`. Blank when the asset has no income row. |
 | Notes | Free text. May be blank. |
+| Market Cap Rate | Optional. A percent, such as `5.25` for 5.25%. Plain decimal, with no percent sign. May be blank. |
+| Cap Rate Source | Optional. Where the cap rate came from. May be blank. |
+| Cap Rate Date | Optional. `YYYY-MM-DD`. May be blank. |
+| Estimated Value | Optional. Plain decimal mark-to-market estimate. May be blank. |
 
 A CSV that cannot be read shows a warning and leaves the assets off the page. The warning does not include cells from the file. Cash and liabilities still show.
 
 ### Balance Sheet
 
-The page is the second sidebar entry, after Profit & Loss. Logging in once covers it. The line under the title is `As of` today's date.
+The page is the second sidebar entry, after Profit & Loss. The app password comes first. The Balance Sheet then asks for its own password. The line under the title is `As of` today's date, then `Value assets at:` with `Appraisal` (the default) and `Cap-rate estimate`.
 
-Three cards sit under that line: total assets, total liabilities, and net worth. Net worth is total assets minus total liabilities. It is green when positive and red when negative.
+Three cards sit under that: total assets, total liabilities, and net worth. Net worth is total assets minus total liabilities. It is green when positive and red when negative.
 
-Total assets are cash plus each asset's market value. Total liabilities are the loan schedule's current remaining balances, plus other loans, plus credit cards.
+Total assets are cash plus each asset's value. By default that value is the appraised Market Value. Choosing `Cap-rate estimate` uses Estimated Value where one is entered, and leaves every other asset on its appraisal. Total liabilities are the loan schedule's current remaining balances, plus other loans, plus credit cards. Liabilities do not change with the toggle.
 
-Under the cards, one bordered card per asset shows the market value with its valuation date and source, the cost basis, and the gain or loss versus cost. The linked loan is the schedule's current remaining balance for that Loan ID. Equity is the market value minus that balance. With no linked loan, equity is the market value and the loan is `n/a`. LTV is the loan divided by the market value. When an income source id is set, the card also shows trailing-12-month cash income for that source, the yield (that income divided by market value), and cash on equity (that income minus the linked loan's trailing-12-month scheduled payments, divided by equity). A missing input is `n/a`.
+Under the cards, one bordered card per asset shows the market value with its valuation date and source. When a cap rate or an estimated value is entered, the card shows `Est. market value (cap rate)` beside it: the estimate, the cap rate, the source, the date, and the difference versus the appraisal. The cost basis and the gain or loss stay on the appraisal. The linked loan is the schedule's current remaining balance for that Loan ID. Equity is the selected value minus that balance. With no linked loan, equity is the selected value and the loan is `n/a`. LTV is the loan divided by the selected value. When an income source id is set, the card also shows trailing-12-month cash income for that source, the yield (that income divided by the appraisal), and cash on equity (that income minus the linked loan's trailing-12-month scheduled payments, divided by the equity shown on the card). A missing input is `n/a`.
+
+### Balance sheet password
+
+`BALANCE_SHEET_PASSWORD` is a second password, set by the owner on the service **Environment** page. Do not commit it. After `APP_PASSWORD` matches, opening Balance Sheet shows a password prompt. The check uses `hmac.compare_digest`. A match unlocks the page for this browser session. `Lock balance sheet` locks it again. Log out locks it too.
+
+If `BALANCE_SHEET_PASSWORD` is unset or blank, the page stays locked and says `Balance Sheet password not set yet.` Balances, loans, income, and assets are not read and are not shown until the page is unlocked. The password is never written to the page or to a log.
 
 The assets table groups cash, then each asset category, with a subtotal per group. Cash is the current balance of accounts labeled `depository`, `cash`, `checking`, or `savings`. The liabilities table groups mortgages and other property loans from the schedule, other loans (auto loans and balance rows typed as loans), and credit cards, with a subtotal per group. A balance row whose account is a scheduled loan's Loan ID, or that loan's `Lender - Loan Name`, is not listed again. The schedule's remaining balance is the one that counts. The match ignores capitals.
 
@@ -182,7 +195,7 @@ The income and expense rows below the chart are unchanged.
 
 Income is cash received on the deposit date. With `FINANCE_INCOME_CSV` unset or empty, the section shows `No income data yet` and total income `$0.00`. With a CSV, each registered source is one row: the name, the frequency beside it, and the total received in the period. A Source id that is not in the registry is still listed under that raw id. Total income is the sum of those rows. Income is not added into any expense total.
 
-Expenses are one row per source: description, total spend, and data through. Total spend links to `?source=<id>` on the source detail page. The period is carried in the same query string. Logging in once covers every page in the session.
+Expenses are one row per source: description, total spend, and data through. Total spend links to `?source=<id>` on the source detail page. The period is carried in the same query string. Logging in once covers the session. The Balance Sheet asks for `BALANCE_SHEET_PASSWORD` on its own.
 
 Transaction sources (such as Citibank - 7690) sum charges and subtract refunds. Pending charges are included. A negative row is a card payment, and is left out, when its category looks like `Loan Payments`, `Transfer In`, or `Transfer Out`, or when the merchant or description contains `PAYMENT`, `PYMT`, `AUTOPAY`, or `AUTO PAY`. A positive charge is still spend even if the text contains those words. That rule is `is_card_payment` in `kirbancials/spend.py`.
 
@@ -247,6 +260,7 @@ Statement loading lives in `kirbancials/data.py`. Transactions and balances live
 - Health check: `/_stcore/health`
 - `PYTHON_VERSION`: `3.11.9`
 - `APP_PASSWORD`: `sync: false`, so the Blueprint prompts for it instead of storing it in the repo
+- `BALANCE_SHEET_PASSWORD`: `sync: false`. On an existing service, set it on the **Environment** page. Until it is set, the Balance Sheet stays locked.
 
 Create the service from the Blueprint:
 
@@ -273,6 +287,7 @@ Do not commit them. On the service **Environment** page:
 - **Balances.** Set `FINANCE_BALANCES_CSV` to the raw CSV (`Account`, `As Of`, `Current Balance`, `Available Credit`, `Credit Limit`). To show checking and savings on the Balance Sheet, add an `Account Type` column. Use `depository`, `cash`, `checking`, or `savings` for cash. Use `loan` for a loan that is not already a registered auto loan. Use `credit` for a card. Leave the column off and every unlabeled account that is not a registered auto loan stays a credit card.
 - **Income.** Set `FINANCE_INCOME_CSV` to the raw CSV (`Transaction ID`, `Date`, `Source`, `Description`, `Amount`). Plain text, not gzipped. Leave it unset to show income as `$0.00`.
 - **Loan schedule.** Set `FINANCE_LOAN_SCHEDULE_CSV` to the raw CSV. The header is `Loan ID,Lender,Loan Name,Collateral,Rate,Payment Number,Payment Date,Payment,Interest,Principal,Remaining Balance`. Plain text, not gzipped. Leave it unset to leave scheduled loans out.
-- **Assets.** Set `FINANCE_ASSETS_CSV` to the raw CSV. The header is `Asset ID,Asset Name,Category,Acquired Date,Cost Basis,Market Value,Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes`. Plain text, not gzipped. Leave it unset to show cash and liabilities only.
+- **Assets.** Set `FINANCE_ASSETS_CSV` to the raw CSV. The header is `Asset ID,Asset Name,Category,Acquired Date,Cost Basis,Market Value,Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes,Market Cap Rate,Cap Rate Source,Cap Rate Date,Estimated Value`. The last four columns are optional. Plain text, not gzipped. Leave it unset to show cash and liabilities only.
+- **Balance sheet password.** Set `BALANCE_SHEET_PASSWORD` to a password you choose. It is separate from `APP_PASSWORD`. Leave it unset and the Balance Sheet stays locked.
 
 Until those are set, the deployed app shows the fake samples and a banner. If the transaction sample file is missing as well, Daily spending says `No transaction data yet`.

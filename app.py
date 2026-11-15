@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from kirbancials.auth import require_login
+from kirbancials.auth import BALANCE_SHEET_UNLOCKED, end_session, lock_balance_sheet, require_login
 
 st.set_page_config(page_title="Kirbancials", layout="wide")
 require_login()
@@ -29,8 +29,14 @@ with st.sidebar:
     st.page_link("views/balance_sheet.py", label="Balance Sheet")
     st.page_link("views/daily.py", label="Daily spending")
     st.page_link("views/statements.py", label="Monthly statements")
+    if st.session_state.get(BALANCE_SHEET_UNLOCKED) is True and st.button(
+        "Lock balance sheet",
+        key="lock_balance_sheet_sidebar",
+    ):
+        lock_balance_sheet(st.session_state)
+        st.rerun()
     if st.button("Log out"):
-        st.session_state["authenticated"] = False
+        end_session(st.session_state)
         st.rerun()
 
 navigation.run()
