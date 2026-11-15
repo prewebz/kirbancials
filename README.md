@@ -2,7 +2,7 @@
 
 Personal finance dashboard for credit card statement summaries and other expenses. It is a [Streamlit](https://streamlit.io/) app meant to run as a free Python web service on [Render](https://render.com/).
 
-After login the landing page is **Profit & Loss**. It totals cash income and expenses for a period you pick. Each expense name links to that source, and each income total links to that income source. **Daily spending** and **Monthly statements** stay available from the sidebar.
+After login the landing page is **Profit & Loss**. **Balance Sheet** is the next page in the sidebar. Profit & Loss totals cash income and expenses for a period you pick. Each expense name links to that source, and each income total links to that income source. **Daily spending** and **Monthly statements** stay available from the sidebar.
 
 Expense sources are registered in `kirbancials/sources.py`. Citibank - 7690 reads transactions for `Citi AAdvantage card ending 7690`. Nordstrom reads statement months for `Nordstrom card ending 5488`. Any other Account in the data is still listed under its own name. See [Adding sources](#adding-sources).
 
@@ -78,6 +78,16 @@ Amount sign: positive is a charge, negative is a payment, refund, or credit. Row
 
 One row is kept per account, the row with the latest `As Of`.
 
+`Account Type` is optional. The file does not have it unless you add the column. Without it, an account registered as an auto loan is a loan, and every other account is a credit card. There is no way to tell a checking or savings account from a card. The Balance Sheet uses these values when the column is present:
+
+| Account Type | Balance sheet group |
+| --- | --- |
+| `depository`, `cash`, `checking`, or `savings` | Cash |
+| `loan`, `mortgage`, `auto`, or `auto loan` | Other loans |
+| `credit`, `credit card`, `credit_card`, `card`, or blank | Credit cards, unless the account is a registered auto loan |
+
+A recognized value wins over the auto-loan name list. See [Balance Sheet](#balance-sheet).
+
 ### Income
 
 Profit & Loss reads cash income from `FINANCE_INCOME_CSV`: the raw CSV text, not gzipped. If that variable is missing or blank, every income total is `$0.00` and the page says `No income data yet`. This file is not part of card spend or statement spend.
@@ -122,6 +132,44 @@ The debt snapshot keeps the credit-card total. Its loan-interest figure adds thi
 
 A CSV that cannot be read shows a warning and leaves scheduled loans out. The rest of the page still loads. The warning does not include cells from the file.
 
+### Assets
+
+The Balance Sheet reads manually entered assets from `FINANCE_ASSETS_CSV`: the raw CSV text, not gzipped. If that variable is missing or blank, the page still loads. It shows cash and liabilities from the other files, and says `No assets are configured.` Do not commit the CSV. On Render, set it on the service **Environment** page the same way as the other CSV variables.
+
+The header row is exactly:
+
+`Asset ID,Asset Name,Category,Acquired Date,Cost Basis,Market Value,Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes`
+
+| Column | Role |
+| --- | --- |
+| Asset ID | Stable id for the row. A repeated id makes the file unreadable. |
+| Asset Name | Shown on the card. |
+| Category | Group on the assets table. Examples: `Real Estate`, `Note Receivable`, `Investment`, `Other`. |
+| Acquired Date | `YYYY-MM-DD`. May be blank. |
+| Cost Basis | Plain decimal, such as `1000.00` or `1000`. May be blank. No dollar sign and no thousands separator. |
+| Market Value | Plain decimal. May be blank. A blank value is left out of the totals and shown as `n/a`. |
+| Valuation Date | `YYYY-MM-DD`. May be blank. |
+| Valuation Source | Where the value came from, such as an appraisal. May be blank. |
+| Linked Loan ID | `Loan ID` from `FINANCE_LOAN_SCHEDULE_CSV`. Blank when nothing is linked. |
+| Income Source ID | Income source id, such as `chipotle_nnn`. Blank when the asset has no income row. |
+| Notes | Free text. May be blank. |
+
+A CSV that cannot be read shows a warning and leaves the assets off the page. The warning does not include cells from the file. Cash and liabilities still show.
+
+### Balance Sheet
+
+The page is the second sidebar entry, after Profit & Loss. Logging in once covers it. The line under the title is `As of` today's date.
+
+Three cards sit under that line: total assets, total liabilities, and net worth. Net worth is total assets minus total liabilities. It is green when positive and red when negative.
+
+Total assets are cash plus each asset's market value. Total liabilities are the loan schedule's current remaining balances, plus other loans, plus credit cards.
+
+Under the cards, one bordered card per asset shows the market value with its valuation date and source, the cost basis, and the gain or loss versus cost. The linked loan is the schedule's current remaining balance for that Loan ID. Equity is the market value minus that balance. With no linked loan, equity is the market value and the loan is `n/a`. LTV is the loan divided by the market value. When an income source id is set, the card also shows trailing-12-month cash income for that source, the yield (that income divided by market value), and cash on equity (that income minus the linked loan's trailing-12-month scheduled payments, divided by equity). A missing input is `n/a`.
+
+The assets table groups cash, then each asset category, with a subtotal per group. Cash is the current balance of accounts labeled `depository`, `cash`, `checking`, or `savings`. The liabilities table groups mortgages and other property loans from the schedule, other loans (auto loans and balance rows typed as loans), and credit cards, with a subtotal per group. A balance row whose account is a scheduled loan's Loan ID, or that loan's `Lender - Loan Name`, is not listed again. The schedule's remaining balance is the one that counts. The match ignores capitals.
+
+The bottom of the page says `Market values are entered manually from appraisals; update when a new valuation is available.`
+
 ## Profit & Loss
 
 The period picker is at the top of the page. The choices are This month (the default), Last month, Quarter to date, Year to date, and Last 12 months. The exact dates are shown under the selector. This month, quarter to date, year to date, and the last 12 months end today. Last month is the previous calendar month, from the 1st through the last day. Quarter to date starts on the first day of the current calendar quarter. The last 12 months start the day after the same date a year ago.
@@ -146,7 +194,7 @@ Scheduled loans from `FINANCE_LOAN_SCHEDULE_CSV` are listed with that loan inter
 
 Net profit / (loss) is total income minus total expenses. A loss is shown as `-$1,234.56`.
 
-`python -m unittest discover` checks the payment rule, month boundaries, the sample expense totals, cash income, the run rate, expected next-month income, loan schedules, and period ranges.
+`python -m unittest discover` checks the payment rule, month boundaries, the sample expense totals, cash income, the run rate, expected next-month income, loan schedules, period ranges, and balance sheet totals.
 
 Daily spending and Monthly statements are unchanged secondary pages.
 
@@ -184,7 +232,7 @@ Amounts are shown as stored. Negatives render as `-$1,234.56`.
 - Statement-file income: set `Source Kind` to `income` and put the amount in `Income` (or in `Net Spend` if that column is the amount). That stays on the statement summary. It does not change Profit & Loss cash income.
 - A new kind with its own total rules: add one `SourceKind` entry in `kirbancials/schema.py`.
 
-Statement loading lives in `kirbancials/data.py`. Transactions and balances live in `kirbancials/activity.py`.
+Statement loading lives in `kirbancials/data.py`. Transactions and balances live in `kirbancials/activity.py`. Asset rows live in `kirbancials/assets.py`. The balance sheet lives in `kirbancials/balance_sheet.py`.
 
 ## Deploy on Render
 
@@ -222,8 +270,9 @@ Do not commit it. Pick one of these after the service exists:
 Do not commit them. On the service **Environment** page:
 
 - **Transactions.** Prefer a secret file named `transactions.csv` (mounted at `/etc/secrets/transactions.csv`). Or set `FINANCE_TRANSACTIONS_CSV` to the raw CSV. If the text is large, gzip it, base64-encode the bytes, and set `FINANCE_TRANSACTIONS_CSV_GZ`. That variable is checked first. Secret files on a service share a 1 MB limit.
-- **Balances.** Set `FINANCE_BALANCES_CSV` to the raw CSV (`Account`, `As Of`, `Current Balance`, `Available Credit`, `Credit Limit`).
+- **Balances.** Set `FINANCE_BALANCES_CSV` to the raw CSV (`Account`, `As Of`, `Current Balance`, `Available Credit`, `Credit Limit`). To show checking and savings on the Balance Sheet, add an `Account Type` column. Use `depository`, `cash`, `checking`, or `savings` for cash. Use `loan` for a loan that is not already a registered auto loan. Use `credit` for a card. Leave the column off and every unlabeled account that is not a registered auto loan stays a credit card.
 - **Income.** Set `FINANCE_INCOME_CSV` to the raw CSV (`Transaction ID`, `Date`, `Source`, `Description`, `Amount`). Plain text, not gzipped. Leave it unset to show income as `$0.00`.
 - **Loan schedule.** Set `FINANCE_LOAN_SCHEDULE_CSV` to the raw CSV. The header is `Loan ID,Lender,Loan Name,Collateral,Rate,Payment Number,Payment Date,Payment,Interest,Principal,Remaining Balance`. Plain text, not gzipped. Leave it unset to leave scheduled loans out.
+- **Assets.** Set `FINANCE_ASSETS_CSV` to the raw CSV. The header is `Asset ID,Asset Name,Category,Acquired Date,Cost Basis,Market Value,Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes`. Plain text, not gzipped. Leave it unset to show cash and liabilities only.
 
 Until those are set, the deployed app shows the fake samples and a banner. If the transaction sample file is missing as well, Daily spending says `No transaction data yet`.

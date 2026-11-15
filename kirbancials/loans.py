@@ -10,6 +10,7 @@ from datetime import date
 
 import pandas as pd
 
+from kirbancials.activity import latest_account_balances
 from kirbancials.periods import Period
 from kirbancials.sources import ExpenseSource
 
@@ -50,24 +51,10 @@ def loan_label(source: ExpenseSource) -> str:
 
 def current_balance(balances: pd.DataFrame | None, account: str) -> tuple[float | None, date | None]:
     """Match FINANCE_BALANCES_CSV by account string. Returns (balance, as-of date)."""
-    if balances is None or balances.empty or "Account" not in balances.columns:
-        return None, None
-    names = balances["Account"].astype("string").fillna("").str.strip()
-    match = balances.loc[names == account].copy()
-    if match.empty or "Current Balance" not in match.columns:
-        return None, None
-    match["_amount"] = pd.to_numeric(match["Current Balance"], errors="coerce")
-    match = match.dropna(subset=["_amount"])
-    if match.empty:
-        return None, None
-    if "As Of" in match.columns:
-        match["_as_of"] = pd.to_datetime(match["As Of"], errors="coerce")
-        match = match.sort_values("_as_of", ascending=False, na_position="last")
-    amount = float(match.iloc[0]["_amount"])
-    as_of = None
-    if "_as_of" in match.columns and pd.notna(match.iloc[0]["_as_of"]):
-        as_of = match.iloc[0]["_as_of"].date()
-    return amount, as_of
+    for item in latest_account_balances(balances):
+        if item.account == account:
+            return item.amount, item.as_of
+    return None, None
 
 
 def loan_payment_table(transactions: pd.DataFrame, account: str, period: Period) -> pd.DataFrame:

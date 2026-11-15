@@ -12,6 +12,10 @@ If none of those exist, the daily tab says there is no transaction data yet.
 Balances come from FINANCE_BALANCES_CSV (plain CSV text), then
 sample_data/balances.csv. Amounts on transactions use the Plaid sign:
 positive is a charge, negative is a payment, refund, or credit.
+
+The balance file has no account-type column unless one is added. The
+optional Account Type column labels cash. Without it, a row is an auto
+loan when its name is registered as one, and a credit card otherwise.
 """
 
 from __future__ import annotations
@@ -62,6 +66,12 @@ BAL_CURRENT = "Current Balance"
 BAL_AVAILABLE = "Available Credit"
 BAL_LIMIT = "Credit Limit"
 BAL_COLUMNS = [BAL_ACCOUNT, BAL_AS_OF, BAL_CURRENT, BAL_AVAILABLE, BAL_LIMIT]
+# Optional. The balance sheet uses it to separate checking and savings from cards.
+ACCOUNT_TYPE = "Account Type"
+
+CASH_ACCOUNT_TYPES = frozenset({"depository", "cash", "checking", "savings"})
+LOAN_ACCOUNT_TYPES = frozenset({"loan", "mortgage", "auto", "auto loan"})
+CREDIT_ACCOUNT_TYPES = frozenset({"credit", "credit card", "credit_card", "card"})
 
 ALL_ACCOUNTS = "All accounts"
 _TRUE_TEXT = {"1", "true", "t", "yes", "y", "pending"}
@@ -72,6 +82,16 @@ class TransactionData:
     rows: pd.DataFrame
     source_label: str
     is_sample: bool
+
+
+@dataclass(frozen=True)
+class AccountBalance:
+    """Latest current balance for one account."""
+
+    account: str
+    amount: float
+    account_type: str
+    as_of: date | None
 
 
 @dataclass
@@ -88,6 +108,74 @@ class BalanceData:
         if stamps.empty:
             return None
         return pd.Timestamp(stamps.max())
+
+
+def account_balance_kind(account: str, account_type: object = None) -> str:
+    """Classify one balance row as cash, loan, or credit.
+
+    A recognized Account Type wins. A blank or unknown type is an auto loan
+    when the account name is registered, and a credit card otherwise. That
+    is how unlabeled balance files have always been read.
+    """
+    kind = _blank_text(account_type).casefold()
+    if kind in CASH_ACCOUNT_TYPES:
+        return "cash"
+    if kind in LOAN_ACCOUNT_TYPES:
+        return "loan"
+    if kind in CREDIT_ACCOUNT_TYPES:
+        return "credit"
+    if _blank_text(account) in loan_accounts():
+        return "loan"
+    return "credit"
+
+
+def latest_account_balances(balances: pd.DataFrame | None) -> list[AccountBalance]:
+    """One row per account, the latest As Of. This is the rule current_balance uses."""
+    if balances is None or balances.empty:
+        return []
+    if BAL_ACCOUNT not in balances.columns or BAL_CURRENT not in balances.columns:
+        return []
+    frame = balances.copy()
+    frame["_name"] = frame[BAL_ACCOUNT].map(_blank_text)
+    frame = frame.loc[frame["_name"].ne("")]
+    frame["_amount"] = pd.to_numeric(frame[BAL_CURRENT], errors="coerce")
+    frame = frame.dropna(subset=["_amount"])
+    if frame.empty:
+        return []
+    if ACCOUNT_TYPE in frame.columns:
+        frame["_type"] = frame[ACCOUNT_TYPE].map(_blank_text)
+    else:
+        frame["_type"] = ""
+    if BAL_AS_OF in frame.columns:
+        frame["_as_of"] = pd.to_datetime(frame[BAL_AS_OF], errors="coerce", utc=True)
+        frame = frame.sort_values("_as_of", ascending=False, na_position="last", kind="mergesort")
+    else:
+        frame["_as_of"] = pd.NaT
+    frame = frame.drop_duplicates("_name", keep="first")
+    found: list[AccountBalance] = []
+    for record in frame.to_dict("records"):
+        stamp = record["_as_of"]
+        as_of = None if pd.isna(stamp) else pd.Timestamp(stamp).date()
+        found.append(
+            AccountBalance(
+                account=str(record["_name"]),
+                amount=float(record["_amount"]),
+                account_type=str(record["_type"]),
+                as_of=as_of,
+            )
+        )
+    return found
+
+
+def _blank_text(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        return str(value).strip()
+    return str(value).strip()
 
 
 def decode_transactions_gz(payload: str) -> str:
@@ -294,6 +382,8 @@ def _read_balances(src: object) -> pd.DataFrame:
         if column not in frame.columns:
             frame[column] = pd.NA
     out = frame.loc[:, BAL_COLUMNS].copy()
+    if ACCOUNT_TYPE in frame.columns:
+        out[ACCOUNT_TYPE] = frame[ACCOUNT_TYPE].map(_blank_text)
     out[BAL_ACCOUNT] = out[BAL_ACCOUNT].astype("string").fillna("").str.strip()
     out.loc[out[BAL_ACCOUNT].eq(""), BAL_ACCOUNT] = DEFAULT_ACCOUNT
     out[BAL_AS_OF] = pd.to_datetime(out[BAL_AS_OF], utc=True, errors="coerce")

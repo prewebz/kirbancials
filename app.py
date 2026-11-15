@@ -1,6 +1,7 @@
 """Kirbancials entrypoint.
 
 The password gate runs before every page. Profit & Loss is the landing page.
+Balance Sheet is the next sidebar page.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ require_login()
 navigation = st.navigation(
     [
         st.Page("views/profit_and_loss.py", title="Profit & Loss", default=True),
+        st.Page("views/balance_sheet.py", title="Balance Sheet", url_path="balance-sheet"),
         st.Page("views/source_detail.py", title="Source detail", url_path="source"),
         st.Page("views/daily.py", title="Daily spending", url_path="daily"),
         st.Page("views/statements.py", title="Monthly statements", url_path="statements"),
@@ -24,6 +26,7 @@ navigation = st.navigation(
 
 with st.sidebar:
     st.page_link("views/profit_and_loss.py", label="Profit & Loss")
+    st.page_link("views/balance_sheet.py", label="Balance Sheet")
     st.page_link("views/daily.py", label="Daily spending")
     st.page_link("views/statements.py", label="Monthly statements")
     if st.button("Log out"):

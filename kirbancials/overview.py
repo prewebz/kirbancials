@@ -13,9 +13,10 @@ from datetime import date, datetime
 
 import pandas as pd
 
+from kirbancials.activity import account_balance_kind, latest_account_balances
 from kirbancials.income import total_received
 from kirbancials.periods import Period, add_months, resolve_period
-from kirbancials.sources import INCOME_SOURCES, IncomeSource, loan_accounts
+from kirbancials.sources import INCOME_SOURCES, IncomeSource
 from kirbancials.spend import expense_lines
 
 CHART_MONTHS = 6
@@ -89,24 +90,17 @@ def monthly_run_rate(net: float, period: Period) -> RunRate:
 
 
 def credit_card_balance_total(balances: pd.DataFrame | None) -> float:
-    """Sum the latest current balance of every account that is not a loan."""
-    if balances is None or balances.empty:
-        return 0.0
-    if "Account" not in balances.columns or "Current Balance" not in balances.columns:
-        return 0.0
-    frame = balances.copy()
-    frame["_name"] = frame["Account"].astype("string").fillna("").str.strip()
-    frame = frame.loc[~frame["_name"].isin(loan_accounts())]
-    if frame.empty:
-        return 0.0
-    if "As Of" in frame.columns:
-        frame["_as_of"] = pd.to_datetime(frame["As Of"], errors="coerce")
-        frame = frame.sort_values("_as_of", ascending=False, na_position="last", kind="mergesort")
-    frame = frame.drop_duplicates("_name", keep="first")
-    amounts = pd.to_numeric(frame["Current Balance"], errors="coerce").dropna()
-    if amounts.empty:
-        return 0.0
-    return float(amounts.sum())
+    """Sum the latest current balance of every credit-card account.
+
+    Registered auto loans are not cards. An Account Type of depository, cash,
+    checking, or savings is cash, and a loan type is a loan. A row with no
+    type is still a card unless its name is a registered loan.
+    """
+    total = 0.0
+    for item in latest_account_balances(balances):
+        if account_balance_kind(item.account, item.account_type) == "credit":
+            total += item.amount
+    return float(total)
 
 
 def estimated_loan_interest_this_month(

@@ -39,6 +39,16 @@ def format_money(value: object) -> str:
     return f"{sign}${abs(number):,.2f}"
 
 
+def format_signed_money(value: float) -> str:
+    """Money text. Green when positive, red when negative, plain at zero."""
+    rendered = format_money(value)
+    if value > 0:
+        return f":green[{rendered}]"
+    if value < 0:
+        return f":red[{rendered}]"
+    return rendered
+
+
 def format_money_columns(frame: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
     """Return a copy with the given numeric columns replaced by money text."""
     display = frame.copy()
