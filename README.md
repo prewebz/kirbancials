@@ -241,14 +241,28 @@ The header row is exactly:
 | Section | `Income`, `Expense`, or `Below the line`. |
 | Account Number | Account key. A missing account for a house is zero. |
 | Account Name | Line on the statement. |
-| Amount | Plain decimal, such as `1000.00` or `1000`. No dollar sign and no thousands separator. Normal income and normal expense are positive. |
+| Amount | Plain decimal, such as `1000.00`, `1000`, or `-50.00`. No dollar sign and no thousands separator. A negative income amount is a refund and reduces income. |
 | Source | `Kline P&L` or `Bank`. |
 
 Net income is income minus expense. Below-the-line rows are left out of that net. Account `BANK-TAX-PEN`, named `Tax Penalties (excluded)`, is the below-the-line row. It is shown as a memo line when the amount is not zero. A house with no income still appears when it has any row in the month.
 
-Under the month list, the totals choice is This month (the default), Year to date, or Trailing 12 months. The range ends on the month you picked. Three cards show income, expense, and net income. Expense is listed by account under the cards. The house table shows address, income, expense, and net. Choose an address to open that house: its income lines, its expense lines, net income, and the memo line when there is one. Back to portfolio returns to the table. Net is green when positive and red when negative. A loss is shown as `-$1,234.56`.
+Under the month list, the totals choice is This month (the default), Year to date, or Trailing 12 months. The range ends on the month you picked. Three cards show income, expense, and net income. Expense is listed by account under the cards. The label starts with the account number, such as `5000 Property Management Expenses`, so account 5000 and account 6400 stay apart even though both are named Property Management Expenses. The house page uses the same labels. The house table shows address, income, expense, and net. Choose an address to open that house: its income lines, its expense lines, net income, and the memo line when there is one. Back to portfolio returns to the table. Net is green when positive and red when negative. A loss is shown as `-$1,234.56`.
 
-A CSV that cannot be read shows a warning and no figures. The warning does not include cells from the file.
+Below the house table, Trending uses the latest months in the file. Property taxes read `FINANCE_VWH_TAX_CSV`: the raw CSV text, not gzipped. One row is one pay year and one house, joined to the profit and loss on Property ID. Indianapolis bills the tax in two installments, spring due May 10 and fall due November 10. The amounts are the tax only. Penalties are already left out. If that variable is missing or blank, Trending still shows the run rate and says `Property tax data isn't loaded yet`. Do not commit the CSV.
+
+The header row is exactly:
+
+`Pay Year,Property ID,Address,Parcel,Spring Tax,Fall Tax,Annual Tax,Spring Status,Fall Status`
+
+The tax table lists each house for the pay year: address, spring, fall, annual, the status of each installment, and the change from the prior pay year in dollars and percent. The newest pay year opens first. A pay year list appears when the file has more than one year. The last row is the portfolio total. Change is blank when that house has no row for the prior year.
+
+Estimated annual run rate is one row per house, plus a total: income, operating expense, property tax, insurance, net, and net per month. Income is every Kline P&L row in the Income section. Operating expense is every Kline P&L row in the Expense section, whichever account number Kline used. Each of those two is the average month over the latest 12 months in the file, or fewer when the file has fewer months, times 12. A month that is in the file but has no row for that house counts as zero. The note under the table names the months. Property tax is that house's annual tax for the latest pay year. When the house has no tax bill, property tax is the sum of account `BANK-TAX` over those same months. Insurance is account `BANK-INS` in the latest of those months, times 12. Prior-year tax (`BANK-TAX-PY`) and penalties (`BANK-TAX-PEN`) are left out of the run rate. Net is income minus operating expense, property tax, and insurance.
+
+The monthly chart shows income, expense, and net for each month in the file. Expense matches the rest of the page. Choose one house to chart that house. On a house page, Trending shows that house's tax row and run rate.
+
+A property-tax CSV that cannot be read shows a warning. The run rate still shows, using tax paid in the profit and loss. The warning does not include cells from the file.
+
+A profit-and-loss CSV that cannot be read shows a warning and no figures. The warning does not include cells from the file.
 
 ## Adding sources
 
@@ -259,7 +273,7 @@ A CSV that cannot be read shows a warning and no figures. The warning does not i
 - Statement-file income: set `Source Kind` to `income` and put the amount in `Income` (or in `Net Spend` if that column is the amount). That stays on the statement summary. It does not change Profit & Loss cash income.
 - A new kind with its own total rules: add one `SourceKind` entry in `kirbancials/schema.py`.
 
-Statement loading lives in `kirbancials/data.py`. Transactions and balances live in `kirbancials/activity.py`. Asset rows live in `kirbancials/assets.py`. The balance sheet lives in `kirbancials/balance_sheet.py`. The VWH portfolio lives in `kirbancials/vwh.py`.
+Statement loading lives in `kirbancials/data.py`. Transactions and balances live in `kirbancials/activity.py`. Asset rows live in `kirbancials/assets.py`. The balance sheet lives in `kirbancials/balance_sheet.py`. The VWH portfolio lives in `kirbancials/vwh.py`. Trending math lives in `kirbancials/vwh_trend.py`.
 
 ## Deploy on Render
 
@@ -302,5 +316,6 @@ Do not commit them. On the service **Environment** page:
 - **Loan schedule.** Set `FINANCE_LOAN_SCHEDULE_CSV` to the raw CSV. The header is `Loan ID,Lender,Loan Name,Collateral,Rate,Payment Number,Payment Date,Payment,Interest,Principal,Remaining Balance`. Plain text, not gzipped. Leave it unset to leave scheduled loans out.
 - **Assets.** Set `FINANCE_ASSETS_CSV` to the raw CSV. The header is `Asset ID,Asset Name,Category,Acquired Date,Cost Basis,Market Value,Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes`. Plain text, not gzipped. Leave it unset to show cash and liabilities only.
 - **VWH P&L.** Set `FINANCE_VWH_PL_CSV` to the raw CSV. The header is `Month,Property ID,Address,Section,Account Number,Account Name,Amount,Source`. Plain text, not gzipped. Leave it unset and the page says `No VWH P&L data yet`.
+- **VWH property tax.** Set `FINANCE_VWH_TAX_CSV` to the raw CSV. The header is `Pay Year,Property ID,Address,Parcel,Spring Tax,Fall Tax,Annual Tax,Spring Status,Fall Status`. Plain text, not gzipped. Leave it unset and Trending still shows the run rate, and says property tax data isn't loaded yet.
 
 Until those are set, the deployed app shows the fake samples and a banner. If the transaction sample file is missing as well, Daily spending says `No transaction data yet`. VWH P&L says `No VWH P&L data yet` until `FINANCE_VWH_PL_CSV` is set.

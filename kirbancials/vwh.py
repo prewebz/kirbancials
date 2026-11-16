@@ -7,6 +7,14 @@ and source. If the variable is missing or blank, there are no rows.
 Net income is income minus expense. Rows whose Section is "Below the line"
 (account BANK-TAX-PEN, Tax Penalties) are not in that net. A missing account
 is zero. A house with no income still appears when it has any row in range.
+A negative income amount is a refund and reduces income.
+
+Account lines are grouped by account number. The label includes the number,
+such as "5000 Property Management Expenses", because different accounts can
+share a name.
+
+Trending sits below the portfolio table. Property tax bills come from
+FINANCE_VWH_TAX_CSV. The run rate math lives in kirbancials/vwh_trend.py.
 """
 
 from __future__ import annotations
@@ -19,6 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -67,7 +76,10 @@ _SECTIONS = {
 _ACCOUNT_RANK = {
     "4000": 10,
     "4300": 20,
+    "5000": 25,
     "5200": 30,
+    "5300": 35,
+    "6000": 38,
     "6400": 40,
     "BANK-INS": 50,
     "BANK-TAX": 60,
@@ -333,16 +345,40 @@ def lookup_property(
 
 def address_labels(properties: Sequence[PropertyStatement]) -> dict[str, str]:
     """Address shown in the table. A shared address keeps the house id."""
-    counts: dict[str, int] = {}
-    for prop in properties:
-        counts[prop.address] = counts.get(prop.address, 0) + 1
-    labels: dict[str, str] = {}
-    for prop in properties:
-        if counts[prop.address] > 1:
-            labels[prop.property_id] = f"{prop.address} ({prop.property_id})"
-        else:
-            labels[prop.property_id] = prop.address
-    return labels
+    return _labels_for([(prop.property_id, prop.address) for prop in properties])
+
+
+def account_label(number: str, name: str) -> str:
+    """'5000 Property Management Expenses'. The number tells same names apart."""
+    number = number.strip()
+    name = name.strip()
+    if not number:
+        return name or "Account"
+    if not name:
+        return number
+    folded = name.casefold()
+    prefix = number.casefold()
+    if folded == prefix or folded.startswith(prefix + " "):
+        return name
+    return f"{number} {name}"
+
+
+def account_table(lines: Sequence[AccountLine]) -> pd.DataFrame:
+    """Account, source, and amount. The account column includes the number."""
+    return pd.DataFrame(
+        {
+            "Account": [account_label(line.account_number, line.account_name) for line in lines],
+            "Source": [line.source for line in lines],
+            "Amount": [line.amount for line in lines],
+        }
+    )
+
+
+def memo_line_text(line: AccountLine) -> str:
+    """One below-the-line line, with the account number in the label."""
+    source = f" · {line.source}" if line.source else ""
+    label = account_label(line.account_number, line.account_name)
+    return f"**{label}**{source} · {format_money(line.amount)}"
 
 
 def memo_lines_to_show(lines: Sequence[AccountLine]) -> tuple[AccountLine, ...]:
@@ -354,8 +390,11 @@ def render_vwh_pl() -> None:
     """Draw the VWH page. Login has already run in the entrypoint."""
     st.caption("Indianapolis single-family rentals managed by Kline Property Management.")
     loaded = resolve_vwh()
+    tax = _trend().resolve_vwh_tax()
     if loaded.warning:
         st.warning(loaded.warning)
+    if tax.warning:
+        st.warning(tax.warning)
     months = available_months(loaded.rows)
     if not months:
         if loaded.warning is None:
@@ -369,9 +408,10 @@ def render_vwh_pl() -> None:
 
     property_id = _query_value("vwh_property")
     if property_id:
-        _render_property(statement, loaded.rows, property_id, month, view)
+        _render_property(statement, loaded.rows, property_id, month, view, tax)
         return
     _render_portfolio(statement, month, view)
+    _render_trending(loaded.rows, tax)
 
 
 def _controls(months: list[str]) -> tuple[str, str]:
@@ -435,11 +475,7 @@ def _render_portfolio(statement: PortfolioStatement, month: str, view: str) -> N
         row[0].page_link(
             VWH_PAGE,
             label=labels[prop.property_id],
-            query_params={
-                "vwh_month": month,
-                "vwh_view": view,
-                "vwh_property": prop.property_id,
-            },
+            query_params=_page_params(month, view, prop.property_id),
         )
         row[1].write(format_money(prop.income))
         row[2].write(format_money(prop.expense))
@@ -457,6 +493,7 @@ def _render_property(
     property_id: str,
     month: str,
     view: str,
+    tax,
 ) -> None:
     _back_link(month, view)
     prop = lookup_property(statement, rows, property_id)
@@ -471,13 +508,14 @@ def _render_property(
     st.subheader("Expense")
     _render_accounts(prop.expense_lines, "No expenses in this range.")
     _render_memo(prop.memo_lines)
+    _render_property_trending(rows, tax, prop.property_id)
 
 
 def _back_link(month: str, view: str) -> None:
     st.page_link(
         VWH_PAGE,
         label="Back to portfolio",
-        query_params={"vwh_month": month, "vwh_view": view},
+        query_params=_page_params(month, view),
     )
 
 
@@ -492,14 +530,7 @@ def _render_accounts(lines: Sequence[AccountLine], empty: str) -> None:
     if not lines:
         st.caption(empty)
         return
-    frame = pd.DataFrame(
-        {
-            "Account": [line.account_name for line in lines],
-            "Source": [line.source for line in lines],
-            "Amount": [line.amount for line in lines],
-        }
-    )
-    show_money_table(frame, ["Amount"])
+    show_money_table(account_table(lines), ["Amount"])
 
 
 def _render_memo(lines: Sequence[AccountLine]) -> None:
@@ -508,8 +539,204 @@ def _render_memo(lines: Sequence[AccountLine]) -> None:
         return
     st.caption("Not included in net income.")
     for line in shown:
-        source = f" · {line.source}" if line.source else ""
-        st.write(f"**{line.account_name}**{source} · {format_money(line.amount)}")
+        st.write(memo_line_text(line))
+
+
+def _render_trending(rows: pd.DataFrame, tax) -> None:
+    st.divider()
+    st.subheader("Trending")
+    st.caption("This section uses the latest months in the file.")
+    _render_tax_section(tax, None)
+    _render_run_rate_section(rows, tax, None)
+    _render_trend_chart(rows)
+
+
+def _render_property_trending(rows: pd.DataFrame, tax, property_id: str) -> None:
+    st.divider()
+    st.subheader("Trending")
+    st.caption("This section uses the latest months in the file.")
+    _render_tax_section(tax, property_id)
+    _render_run_rate_section(rows, tax, property_id)
+
+
+def _choose_tax_year(tax) -> str | None:
+    if not tax.configured:
+        st.info(_trend().NO_TAX_DATA)
+        return None
+    years = _trend().available_pay_years(tax.rows)
+    if not years:
+        if tax.warning is None:
+            st.caption("No property tax rows yet.")
+        return None
+    if len(years) > 1:
+        year = _select("Pay year", years, "vwh_tax_year", years[0], str)
+    else:
+        year = years[0]
+        st.caption(f"Pay year {year}")
+    st.caption("Spring is due May 10 and fall is due November 10. Amounts are the tax only.")
+    return year
+
+
+def _render_tax_section(tax, property_id: str | None) -> None:
+    st.markdown("**Property taxes**")
+    year = _choose_tax_year(tax)
+    if year is None:
+        return
+    table = _trend().property_tax_table(tax.rows, year)
+    if not table.lines:
+        st.caption("No houses for this pay year.")
+        return
+    if property_id is not None and all(line.property_id != property_id for line in table.lines):
+        st.caption(f"This house has no property tax row for {year}.")
+        return
+    show_money_table(_tax_frame(table, property_id), ["Spring", "Fall", "Annual", "vs last year"])
+    st.caption(
+        "Change is this year minus the prior pay year. "
+        "It is blank when that house has no prior-year row."
+    )
+
+
+def _render_run_rate_section(rows: pd.DataFrame, tax, property_id: str | None) -> None:
+    st.markdown("**Estimated annual run rate**")
+    rate = _trend().annual_run_rate(rows, tax.rows, tax_configured=tax.configured)
+    if property_id is None and not rate.lines:
+        st.caption("No houses to estimate.")
+        return
+    if property_id is not None and all(line.property_id != property_id for line in rate.lines):
+        st.caption("This house has no run rate in the latest months.")
+        return
+    show_money_table(
+        _run_rate_frame(rate, property_id),
+        ["Income", "Operating expense", "Property tax", "Insurance", "Net", "Net per month"],
+    )
+    st.caption(_trend().run_rate_note(rate.months, rate.tax_configured))
+
+
+def _render_trend_chart(rows: pd.DataFrame) -> None:
+    st.markdown("**Monthly trend**")
+    property_id = _chart_property(_trend().trend_properties(rows))
+    frame = _trend().monthly_trend(rows, property_id)
+    chart = _trend_chart(frame)
+    if chart is None:
+        st.caption("No months to chart.")
+        return
+    st.altair_chart(chart, use_container_width=True)
+    st.caption("Income, expense, and net by month. Expense matches the rest of this page.")
+
+
+def _tax_frame(table, property_id: str | None) -> pd.DataFrame:
+    lines = table.lines
+    if property_id is not None:
+        lines = tuple(line for line in lines if line.property_id == property_id)
+    labels = _labels_for([(line.property_id, line.address) for line in lines])
+    records = [_tax_record(labels[line.property_id], line) for line in lines]
+    if property_id is None:
+        records.append(
+            {
+                "Address": "Total",
+                "Spring": table.total_spring,
+                "Spring status": "",
+                "Fall": table.total_fall,
+                "Fall status": "",
+                "Annual": table.total_annual,
+                "vs last year": table.total_change if table.total_change is not None else float("nan"),
+                "vs last year %": table.total_change_pct,
+            }
+        )
+    return pd.DataFrame.from_records(records)
+
+
+def _tax_record(address: str, line) -> dict[str, object]:
+    return {
+        "Address": address,
+        "Spring": line.spring,
+        "Spring status": line.spring_status,
+        "Fall": line.fall,
+        "Fall status": line.fall_status,
+        "Annual": line.annual,
+        "vs last year": line.change if line.change is not None else float("nan"),
+        "vs last year %": line.change_pct,
+    }
+
+
+def _run_rate_frame(rate, property_id: str | None) -> pd.DataFrame:
+    lines = rate.lines
+    if property_id is not None:
+        lines = tuple(line for line in lines if line.property_id == property_id)
+    labels = _labels_for([(line.property_id, line.address) for line in lines])
+    records = [_rate_record(labels[line.property_id], line) for line in lines]
+    if property_id is None:
+        records.append(_rate_record("Total", rate.total))
+    return pd.DataFrame.from_records(records)
+
+
+def _rate_record(address: str, line) -> dict[str, object]:
+    return {
+        "Address": address,
+        "Income": line.income,
+        "Operating expense": line.operating_expense,
+        "Property tax": line.property_tax,
+        "Insurance": line.insurance,
+        "Net": line.net,
+        "Net per month": line.net_per_month,
+    }
+
+
+def _chart_property(props: Sequence[tuple[str, str]]) -> str | None:
+    if len(props) < 2:
+        return None
+    labels = _labels_for(props)
+    options = ["", *[property_id for property_id, _address in props]]
+    names = {"": "All properties", **labels}
+    if st.session_state.get("vwh_trend_property") not in names:
+        st.session_state["vwh_trend_property"] = ""
+    selected = st.selectbox(
+        "Property",
+        options,
+        format_func=lambda property_id: names[property_id],
+        key="vwh_trend_property",
+    )
+    return selected or None
+
+
+def _trend_chart(frame: pd.DataFrame) -> alt.Chart | None:
+    if frame.empty:
+        return None
+    order = frame["Label"].tolist()
+    long = frame.melt(
+        id_vars=["Label"],
+        value_vars=["Income", "Expense", "Net"],
+        var_name="Series",
+        value_name="Amount",
+    )
+    return (
+        alt.Chart(long)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("Label:N", sort=order, title=None, axis=alt.Axis(labelAngle=-40)),
+            y=alt.Y("Amount:Q", title=None, axis=alt.Axis(format="$,.0f")),
+            color=alt.Color(
+                "Series:N",
+                title=None,
+                scale=alt.Scale(
+                    domain=["Income", "Expense", "Net"],
+                    range=["#2e7d32", "#c62828", "#1565c0"],
+                ),
+            ),
+            tooltip=[
+                alt.Tooltip("Label:N", title="Month"),
+                alt.Tooltip("Series:N", title=""),
+                alt.Tooltip("Amount:Q", title="Amount", format="$,.2f"),
+            ],
+        )
+        .properties(height=280)
+    )
+
+
+def _trend():
+    from kirbancials import vwh_trend
+
+    return vwh_trend
 
 
 def _rows_in_window(rows: pd.DataFrame, window: MonthWindow) -> pd.DataFrame:
@@ -559,6 +786,7 @@ def _collapse(frame: pd.DataFrame, section: str) -> tuple[tuple[AccountLine, ...
         number = str(record["Account Number"])
         source = str(record["Source"])
         name = str(record["Account Name"])
+        # Account number is the identity. 5000 and 6400 share a name.
         key = (number, source, "") if number else ("", source, name)
         cents = int(record["Cents"])
         bucket = buckets.get(key)
@@ -671,6 +899,29 @@ def _span_count(start: str, end: str) -> int:
     start_index = start_parts[0] * 12 + (start_parts[1] - 1)
     end_index = end_parts[0] * 12 + (end_parts[1] - 1)
     return end_index - start_index + 1
+
+
+def _labels_for(pairs: Sequence[tuple[str, str]]) -> dict[str, str]:
+    counts: dict[str, int] = {}
+    for _property_id, address in pairs:
+        counts[address] = counts.get(address, 0) + 1
+    labels: dict[str, str] = {}
+    for property_id, address in pairs:
+        if counts[address] > 1:
+            labels[property_id] = f"{address} ({property_id})"
+        else:
+            labels[property_id] = address
+    return labels
+
+
+def _page_params(month: str, view: str, property_id: str | None = None) -> dict[str, str]:
+    params = {"vwh_month": month, "vwh_view": view}
+    tax_year = _query_value("vwh_tax_year")
+    if tax_year:
+        params["vwh_tax_year"] = tax_year
+    if property_id:
+        params["vwh_property"] = property_id
+    return params
 
 
 def _query_value(name: str) -> str | None:
