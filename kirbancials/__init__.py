@@ -4,7 +4,8 @@ Statement CSVs, daily card transactions, balance snapshots, and cash income
 each have their own loader. New cards are new Account values. Statement income
 is a Source Kind on the statement file. Profit and loss cash income is
 FINANCE_INCOME_CSV. Fixed loan schedules are FINANCE_LOAN_SCHEDULE_CSV.
-Balance sheet assets are FINANCE_ASSETS_CSV.
+Balance sheet assets are FINANCE_ASSETS_CSV. The VWH portfolio profit and
+loss is FINANCE_VWH_PL_CSV.
 Transaction rows keep the Plaid sign: positive charges, negative payments
 and credits.
 """
