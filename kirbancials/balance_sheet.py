@@ -470,6 +470,12 @@ def _liability_rows(
 
 
 def _with_subtotal(group: str, items: list[SheetRow]) -> list[SheetRow]:
+    """Add a subtotal when the group has two or more rows.
+
+    One row is listed alone. A subtotal would repeat that amount.
+    """
+    if len(items) == 1:
+        return list(items)
     if not items:
         subtotal: float | None = 0.0
     else:

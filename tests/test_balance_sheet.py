@@ -225,7 +225,12 @@ class BalanceSheetTests(unittest.TestCase):
             else:
                 self.assertAlmostEqual(found[2] or 0, expected[2])
         self.assertEqual(len(found_items), len({item for _group, item, _amount in found_items}))
-        self.assertAlmostEqual(_subtotal(sheet.liability_rows, MORTGAGE_GROUP) or 0, 60)
+        mortgage_rows = [row for row in sheet.liability_rows if row.group == MORTGAGE_GROUP]
+        self.assertEqual(
+            [(row.item, row.role) for row in mortgage_rows],
+            [("Sample Bank - Sample mortgage", "item")],
+        )
+        self.assertAlmostEqual(mortgage_rows[0].amount or 0, 60)
         self.assertAlmostEqual(_subtotal(sheet.liability_rows, OTHER_LOAN_GROUP) or 0, 207)
         self.assertAlmostEqual(_subtotal(sheet.liability_rows, CREDIT_GROUP) or 0, 45)
         total_assets = [row for row in sheet.asset_rows if row.role == "total"]
@@ -262,6 +267,28 @@ class BalanceSheetTests(unittest.TestCase):
         self.assertAlmostEqual(sheet.asset_rows[1].amount or 0, 20)
         self.assertAlmostEqual(sheet.total_assets, 60)
         self.assertEqual([row for row in sheet.asset_rows if row.role == "subtotal"], [])
+
+    def test_two_mortgages_keep_a_subtotal(self) -> None:
+        second = (
+            SCHEDULE
+            + "loan-2,Sample Credit Union,Sample second mortgage,Sample Lot,4.0,1,2026-06-01,10.00,2.00,8.00,40.00\n"
+        )
+        schedule, warning = resolve_loan_schedule({LOAN_SCHEDULE_ENV: second})
+        self.assertIsNone(warning)
+        sheet = _sheet(schedule=schedule)
+        mortgage_rows = [row for row in sheet.liability_rows if row.group == MORTGAGE_GROUP]
+        self.assertEqual(
+            [(row.item, row.role) for row in mortgage_rows],
+            [
+                ("Sample Bank - Sample mortgage", "item"),
+                ("Sample Credit Union - Sample second mortgage", "item"),
+                ("Subtotal", "subtotal"),
+            ],
+        )
+        self.assertAlmostEqual(_subtotal(sheet.liability_rows, MORTGAGE_GROUP) or 0, 100)
+        self.assertAlmostEqual(sheet.total_assets, 160)
+        self.assertAlmostEqual(sheet.total_liabilities, 352)
+        self.assertAlmostEqual(sheet.net_worth, 160 - 352)
 
     def test_equity_ltv_yield_and_cash_on_equity(self) -> None:
         sheet = _sheet()
@@ -381,7 +408,12 @@ class BalanceSheetTests(unittest.TestCase):
         self.assertEqual(sheet.positions, ())
         self.assertAlmostEqual(sheet.total_assets, 40)
         self.assertAlmostEqual(sheet.total_liabilities, 312)
-        self.assertAlmostEqual(_subtotal(sheet.liability_rows, MORTGAGE_GROUP) or 0, 60)
+        mortgage_rows = [row for row in sheet.liability_rows if row.group == MORTGAGE_GROUP]
+        self.assertEqual(
+            [(row.item, row.role) for row in mortgage_rows],
+            [("Sample Bank - Sample mortgage", "item")],
+        )
+        self.assertAlmostEqual(mortgage_rows[0].amount or 0, 60)
 
     def test_missing_loan_and_missing_income_are_na(self) -> None:
         text = (
