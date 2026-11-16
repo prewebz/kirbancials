@@ -15,10 +15,13 @@ from kirbancials.vwh import (
     VIEW_T12,
     VIEW_YTD,
     VWH_ENV,
+    account_label,
+    account_table,
     address_labels,
     available_months,
     describe_window,
     lookup_property,
+    memo_line_text,
     memo_lines_to_show,
     month_window,
     prefer_choice,
@@ -247,6 +250,61 @@ class VwhTotalTests(unittest.TestCase):
         window = month_window(months, "2026-10", VIEW_T12)
         self.assertEqual(len(window.months), 12)
         self.assertEqual(describe_window(window), "November 2025 through October 2026")
+
+
+class VwhAccountLabelTests(unittest.TestCase):
+    def test_same_name_stays_split_by_account_number(self) -> None:
+        text = HEADER + "\n"
+        text += "2026-10,VWH1,1 Sample St,Expense,5000,Property Management Expenses,10,Kline P&L\n"
+        text += "2026-10,VWH1,1 Sample St,Expense,6400,Property Management Expenses,30,Kline P&L\n"
+        text += "2026-09,VWH1,1 Sample St,Expense,5000,Property Management Expenses,4,Kline P&L\n"
+        text += "2026-10,VWH1,1 Sample St,Expense,5300,Property Expense,2,Kline P&L\n"
+        text += "2026-10,VWH1,1 Sample St,Expense,6000,General Administrative Expenses,1,Kline P&L\n"
+        statement = _statement(text, "2026-10", VIEW_YTD)
+        lines = _house(statement, "VWH1").expense_lines
+        self.assertEqual(
+            [(line.account_number, format_money(line.amount)) for line in lines],
+            [("5000", "$14.00"), ("5300", "$2.00"), ("6000", "$1.00"), ("6400", "$30.00")],
+        )
+        self.assertEqual(
+            account_table(lines)["Account"].tolist(),
+            [
+                "5000 Property Management Expenses",
+                "5300 Property Expense",
+                "6000 General Administrative Expenses",
+                "6400 Property Management Expenses",
+            ],
+        )
+
+    def test_negative_income_refund_reduces_the_month(self) -> None:
+        text = HEADER + "\n"
+        text += "2026-10,VWH1,1 Sample St,Income,4300,Property Income,1000,Kline P&L\n"
+        text += "2026-10,VWH1,1 Sample St,Income,4000,Property Management Income,-50,Kline P&L\n"
+        statement = _statement(text, "2026-10", VIEW_MONTH)
+        self.assertEqual(format_money(statement.income), "$950.00")
+        house = _house(statement, "VWH1")
+        self.assertEqual(format_signed_money(house.net), ":green[$950.00]")
+        table = account_table(house.income_lines)
+        amounts = dict(zip(table["Account"], table["Amount"]))
+        self.assertEqual(format_money(amounts["4000 Property Management Income"]), "-$50.00")
+        self.assertEqual(format_money(amounts["4300 Property Income"]), "$1,000.00")
+
+    def test_label_and_memo_keep_the_account_number(self) -> None:
+        self.assertEqual(
+            account_label("5000", "Property Management Expenses"),
+            "5000 Property Management Expenses",
+        )
+        self.assertEqual(account_label("5000", "5000 Already labeled"), "5000 Already labeled")
+        self.assertEqual(account_label("", "No number"), "No number")
+        self.assertEqual(account_label("BANK-INS", ""), "BANK-INS")
+        text = HEADER + "\n"
+        text += "2026-10,VWH1,1 Sample St,Below the line,BANK-TAX-PEN,Tax Penalties (excluded),7,Bank\n"
+        statement = _statement(text, "2026-10", VIEW_MONTH)
+        shown = memo_lines_to_show(statement.memo_lines)
+        self.assertEqual(
+            memo_line_text(shown[0]),
+            "**BANK-TAX-PEN Tax Penalties (excluded)** · Bank · $7.00",
+        )
 
 
 class VwhChoiceTests(unittest.TestCase):
