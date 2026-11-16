@@ -429,7 +429,12 @@ def _asset_rows(
     positions: Sequence[AssetPosition],
     total_assets: float,
 ) -> list[SheetRow]:
-    rows = _with_subtotal(CASH_GROUP, list(cash))
+    """Cash accounts and each asset, once, then Total assets.
+
+    Category subtotals are left off. A category usually has one asset, so a
+    subtotal would repeat that amount.
+    """
+    rows = list(cash)
     grouped: dict[str, list[SheetRow]] = {}
     order: list[str] = []
     for position in positions:
@@ -440,7 +445,7 @@ def _asset_rows(
             SheetRow(position.category, position.name, position.market_value, "item")
         )
     for category in order:
-        rows.extend(_with_subtotal(category, grouped[category]))
+        rows.extend(grouped[category])
     rows.append(SheetRow(TOTAL_GROUP, "Total assets", total_assets, "total"))
     return rows
 

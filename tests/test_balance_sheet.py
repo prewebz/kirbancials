@@ -204,19 +204,27 @@ class BalanceSheetTests(unittest.TestCase):
         self.assertEqual(sheet.as_of, TODAY)
         self.assertEqual(format_signed_money(sheet.net_worth), ":red[-$152.00]")
 
-        asset_subtotals = {
-            CASH_GROUP: 40.0,
-            "Real Estate": 100.0,
-            "Note Receivable": 15.0,
-            "Investment": None,
-            "Other": 5.0,
-        }
-        for group, expected in asset_subtotals.items():
-            amount = _subtotal(sheet.asset_rows, group)
-            if expected is None:
-                self.assertIsNone(amount)
+        self.assertEqual([row for row in sheet.asset_rows if row.role == "subtotal"], [])
+        asset_items = [
+            (CASH_GROUP, "Sample Checking", 25.0),
+            (CASH_GROUP, "Sample Savings", 15.0),
+            ("Real Estate", "Sample Shop", 100.0),
+            ("Note Receivable", "Sample IOU", 15.0),
+            ("Investment", "Sample Fund", None),
+            ("Other", "Sample Coin", 5.0),
+        ]
+        found_items = [
+            (row.group, row.item, row.amount)
+            for row in sheet.asset_rows
+            if row.role == "item"
+        ]
+        self.assertEqual([item[:2] for item in found_items], [item[:2] for item in asset_items])
+        for found, expected in zip(found_items, asset_items):
+            if expected[2] is None:
+                self.assertIsNone(found[2])
             else:
-                self.assertAlmostEqual(amount or 0, expected)
+                self.assertAlmostEqual(found[2] or 0, expected[2])
+        self.assertEqual(len(found_items), len({item for _group, item, _amount in found_items}))
         self.assertAlmostEqual(_subtotal(sheet.liability_rows, MORTGAGE_GROUP) or 0, 60)
         self.assertAlmostEqual(_subtotal(sheet.liability_rows, OTHER_LOAN_GROUP) or 0, 207)
         self.assertAlmostEqual(_subtotal(sheet.liability_rows, CREDIT_GROUP) or 0, 45)
@@ -234,6 +242,26 @@ class BalanceSheetTests(unittest.TestCase):
             _group_order(sheet.liability_rows),
             [MORTGAGE_GROUP, OTHER_LOAN_GROUP, CREDIT_GROUP, TOTAL_GROUP],
         )
+
+    def test_two_assets_in_one_category_are_listed_once_each(self) -> None:
+        text = (
+            ASSET_HEADER
+            + "\nhouse,Sample House,Real Estate,2020-01-01,10,40,2026-01-01,Sample,,,\n"
+            + "lot,Sample Lot,Real Estate,2021-01-01,10,20,2026-01-01,Sample,,,\n"
+        )
+        sheet = _sheet(text, balances=pd.DataFrame(), schedule=_schedule()[:0])
+        self.assertEqual(
+            [(row.group, row.item, row.role) for row in sheet.asset_rows],
+            [
+                ("Real Estate", "Sample House", "item"),
+                ("Real Estate", "Sample Lot", "item"),
+                (TOTAL_GROUP, "Total assets", "total"),
+            ],
+        )
+        self.assertAlmostEqual(sheet.asset_rows[0].amount or 0, 40)
+        self.assertAlmostEqual(sheet.asset_rows[1].amount or 0, 20)
+        self.assertAlmostEqual(sheet.total_assets, 60)
+        self.assertEqual([row for row in sheet.asset_rows if row.role == "subtotal"], [])
 
     def test_equity_ltv_yield_and_cash_on_equity(self) -> None:
         sheet = _sheet()
@@ -286,7 +314,8 @@ class BalanceSheetTests(unittest.TestCase):
         self.assertEqual([row.item for row in cash], ["Sample Checking", "Sample Savings"])
         self.assertAlmostEqual(cash[0].amount or 0, 25)
         self.assertAlmostEqual(cash[1].amount or 0, 15)
-        self.assertAlmostEqual(_subtotal(sheet.asset_rows, CASH_GROUP) or 0, 40)
+        self.assertEqual([row for row in sheet.asset_rows if row.role == "subtotal"], [])
+        self.assertAlmostEqual(sum(row.amount or 0 for row in cash), 40)
         names = {row.item for row in cash}
         self.assertNotIn("Citi AAdvantage card ending 7690", names)
         self.assertNotIn("Sample card ending 0000", names)
