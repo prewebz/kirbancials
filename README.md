@@ -2,7 +2,7 @@
 
 Personal finance dashboard for credit card statement summaries and other expenses. It is a [Streamlit](https://streamlit.io/) app meant to run as a free Python web service on [Render](https://render.com/).
 
-After login the landing page is **Profit & Loss**. **Balance Sheet** is the next page in the sidebar. Profit & Loss totals cash income and expenses for a period you pick. Each expense name links to that source, and each income total links to that income source. **Daily spending** and **Monthly statements** stay available from the sidebar.
+After login the landing page is **Profit & Loss**. **Balance Sheet** is the next page in the sidebar. **VWH P&L** follows Balance Sheet. Profit & Loss totals cash income and expenses for a period you pick. Each expense name links to that source, and each income total links to that income source. **Daily spending** and **Monthly statements** stay available from the sidebar.
 
 Expense sources are registered in `kirbancials/sources.py`. Citibank - 7690 reads transactions for `Citi AAdvantage card ending 7690`. Nordstrom reads statement months for `Nordstrom card ending 5488`. Any other Account in the data is still listed under its own name. See [Adding sources](#adding-sources).
 
@@ -223,6 +223,33 @@ Amounts are shown as stored. Negatives render as `-$1,234.56`.
 | Source Kind | Optional. `credit_card` (default), `expense`, or `income`. |
 | Income | Optional amount used when `Source Kind` is `income`. |
 
+### VWH P&L
+
+VWH P&L is the sidebar page after Balance Sheet. It is the monthly profit and loss for the VWH houses in Indianapolis, managed by Kline Property Management.
+
+The page reads `FINANCE_VWH_PL_CSV`: the raw CSV text, not gzipped. If that variable is missing or blank, the page says `No VWH P&L data yet` and the other pages still load. Do not commit the CSV. On Render, set it on the service **Environment** page the same way as the other CSV variables.
+
+The header row is exactly:
+
+`Month,Property ID,Address,Section,Account Number,Account Name,Amount,Source`
+
+| Column | Role |
+| --- | --- |
+| Month | `YYYY-MM`. The page opens on the latest month. The month list is newest first. |
+| Property ID | House key, such as `VWH720`. |
+| Address | Name in the house table. |
+| Section | `Income`, `Expense`, or `Below the line`. |
+| Account Number | Account key. A missing account for a house is zero. |
+| Account Name | Line on the statement. |
+| Amount | Plain decimal, such as `1000.00` or `1000`. No dollar sign and no thousands separator. Normal income and normal expense are positive. |
+| Source | `Kline P&L` or `Bank`. |
+
+Net income is income minus expense. Below-the-line rows are left out of that net. Account `BANK-TAX-PEN`, named `Tax Penalties (excluded)`, is the below-the-line row. It is shown as a memo line when the amount is not zero. A house with no income still appears when it has any row in the month.
+
+Under the month list, the totals choice is This month (the default), Year to date, or Trailing 12 months. The range ends on the month you picked. Three cards show income, expense, and net income. Expense is listed by account under the cards. The house table shows address, income, expense, and net. Choose an address to open that house: its income lines, its expense lines, net income, and the memo line when there is one. Back to portfolio returns to the table. Net is green when positive and red when negative. A loss is shown as `-$1,234.56`.
+
+A CSV that cannot be read shows a warning and no figures. The warning does not include cells from the file.
+
 ## Adding sources
 
 - Another card: add one `ExpenseSource` in `kirbancials/sources.py` (`id`, display name, `transactions` or `statements`, and the Account values it owns), then put those Account values in the CSV. Accounts that are not listed still show up on Profit & Loss under their raw name.
@@ -232,7 +259,7 @@ Amounts are shown as stored. Negatives render as `-$1,234.56`.
 - Statement-file income: set `Source Kind` to `income` and put the amount in `Income` (or in `Net Spend` if that column is the amount). That stays on the statement summary. It does not change Profit & Loss cash income.
 - A new kind with its own total rules: add one `SourceKind` entry in `kirbancials/schema.py`.
 
-Statement loading lives in `kirbancials/data.py`. Transactions and balances live in `kirbancials/activity.py`. Asset rows live in `kirbancials/assets.py`. The balance sheet lives in `kirbancials/balance_sheet.py`.
+Statement loading lives in `kirbancials/data.py`. Transactions and balances live in `kirbancials/activity.py`. Asset rows live in `kirbancials/assets.py`. The balance sheet lives in `kirbancials/balance_sheet.py`. The VWH portfolio lives in `kirbancials/vwh.py`.
 
 ## Deploy on Render
 
@@ -274,5 +301,6 @@ Do not commit them. On the service **Environment** page:
 - **Income.** Set `FINANCE_INCOME_CSV` to the raw CSV (`Transaction ID`, `Date`, `Source`, `Description`, `Amount`). Plain text, not gzipped. Leave it unset to show income as `$0.00`.
 - **Loan schedule.** Set `FINANCE_LOAN_SCHEDULE_CSV` to the raw CSV. The header is `Loan ID,Lender,Loan Name,Collateral,Rate,Payment Number,Payment Date,Payment,Interest,Principal,Remaining Balance`. Plain text, not gzipped. Leave it unset to leave scheduled loans out.
 - **Assets.** Set `FINANCE_ASSETS_CSV` to the raw CSV. The header is `Asset ID,Asset Name,Category,Acquired Date,Cost Basis,Market Value,Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes`. Plain text, not gzipped. Leave it unset to show cash and liabilities only.
+- **VWH P&L.** Set `FINANCE_VWH_PL_CSV` to the raw CSV. The header is `Month,Property ID,Address,Section,Account Number,Account Name,Amount,Source`. Plain text, not gzipped. Leave it unset and the page says `No VWH P&L data yet`.
 
-Until those are set, the deployed app shows the fake samples and a banner. If the transaction sample file is missing as well, Daily spending says `No transaction data yet`.
+Until those are set, the deployed app shows the fake samples and a banner. If the transaction sample file is missing as well, Daily spending says `No transaction data yet`. VWH P&L says `No VWH P&L data yet` until `FINANCE_VWH_PL_CSV` is set.
