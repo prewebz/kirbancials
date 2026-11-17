@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pandas as pd
+
 from kirbancials.formatting import MISSING, format_money
 from kirbancials.vwh import (
     VIEW_MONTH,
@@ -163,7 +165,13 @@ class TaxTableTests(unittest.TestCase):
         self.assertEqual(format_money(table.total_change), "$50.00")
         self.assertEqual(table.total_change_pct, "+20.0%")
         frame = _tax_frame(table, None)
-        self.assertEqual(frame.iloc[-1]["Address"], "Total")
+        self.assertNotIn("Total", frame["Address"].tolist())
+        self.assertTrue(pd.api.types.is_numeric_dtype(frame["Annual"]))
+        self.assertTrue(pd.api.types.is_numeric_dtype(frame["vs last year %"]))
+        self.assertEqual(
+            frame.sort_values("Annual")["Address"].tolist(),
+            ["3 Sample St", "1 Sample St"],
+        )
         one_house = _tax_frame(table, "VWH1")
         self.assertEqual(one_house["Address"].tolist(), ["1 Sample St"])
         self.assertNotIn("Total", one_house["Address"].tolist())

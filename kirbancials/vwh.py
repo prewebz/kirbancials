@@ -32,7 +32,7 @@ import pandas as pd
 import streamlit as st
 
 from kirbancials.data import FinanceDataError
-from kirbancials.formatting import format_money, format_signed_money, show_money_table
+from kirbancials.formatting import format_money, format_signed_money, percent_number, show_money_table
 
 VWH_ENV = "FINANCE_VWH_PL_CSV"
 VWH_PAGE = "views/vwh_pl.py"
@@ -589,7 +589,20 @@ def _render_tax_section(tax, property_id: str | None) -> None:
     if property_id is not None and all(line.property_id != property_id for line in table.lines):
         st.caption(f"This house has no property tax row for {year}.")
         return
-    show_money_table(_tax_frame(table, property_id), ["Spring", "Fall", "Annual", "vs last year"])
+    show_money_table(
+        _tax_frame(table, property_id),
+        ["Spring", "Fall", "Annual", "vs last year"],
+        ["vs last year %"],
+        percent_format="%+.1f%%",
+    )
+    if property_id is None:
+        change = format_money(table.total_change) if table.total_change is not None else "—"
+        st.markdown(
+            f"**Total** · Spring {format_money(table.total_spring)}"
+            f" · Fall {format_money(table.total_fall)}"
+            f" · Annual {format_money(table.total_annual)}"
+            f" · vs last year {change} ({table.total_change_pct})"
+        )
     st.caption(
         "Change is this year minus the prior pay year. "
         "It is blank when that house has no prior-year row."
@@ -609,6 +622,16 @@ def _render_run_rate_section(rows: pd.DataFrame, tax, property_id: str | None) -
         _run_rate_frame(rate, property_id),
         ["Income", "Operating expense", "Property tax", "Insurance", "Net", "Net per month"],
     )
+    if property_id is None:
+        total = rate.total
+        st.markdown(
+            f"**Total** · Income {format_money(total.income)}"
+            f" · Operating expense {format_money(total.operating_expense)}"
+            f" · Property tax {format_money(total.property_tax)}"
+            f" · Insurance {format_money(total.insurance)}"
+            f" · Net {format_money(total.net)}"
+            f" · Net per month {format_money(total.net_per_month)}"
+        )
     st.caption(_trend().run_rate_note(rate.months, rate.tax_configured))
 
 
@@ -630,19 +653,6 @@ def _tax_frame(table, property_id: str | None) -> pd.DataFrame:
         lines = tuple(line for line in lines if line.property_id == property_id)
     labels = _labels_for([(line.property_id, line.address) for line in lines])
     records = [_tax_record(labels[line.property_id], line) for line in lines]
-    if property_id is None:
-        records.append(
-            {
-                "Address": "Total",
-                "Spring": table.total_spring,
-                "Spring status": "",
-                "Fall": table.total_fall,
-                "Fall status": "",
-                "Annual": table.total_annual,
-                "vs last year": table.total_change if table.total_change is not None else float("nan"),
-                "vs last year %": table.total_change_pct,
-            }
-        )
     return pd.DataFrame.from_records(records)
 
 
@@ -655,7 +665,7 @@ def _tax_record(address: str, line) -> dict[str, object]:
         "Fall status": line.fall_status,
         "Annual": line.annual,
         "vs last year": line.change if line.change is not None else float("nan"),
-        "vs last year %": line.change_pct,
+        "vs last year %": percent_number(line.change_pct),
     }
 
 
@@ -665,8 +675,6 @@ def _run_rate_frame(rate, property_id: str | None) -> pd.DataFrame:
         lines = tuple(line for line in lines if line.property_id == property_id)
     labels = _labels_for([(line.property_id, line.address) for line in lines])
     records = [_rate_record(labels[line.property_id], line) for line in lines]
-    if property_id is None:
-        records.append(_rate_record("Total", rate.total))
     return pd.DataFrame.from_records(records)
 
 

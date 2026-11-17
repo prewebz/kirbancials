@@ -185,12 +185,11 @@ class IncomePeriodTests(unittest.TestCase):
         self.assertEqual(income_for_source("chipotle_nnn", deposits, this_month), 1025)
 
         chipotle_rows = deposits_for_source(deposits, "chipotle_nnn", this_month)
-        self.assertEqual(
-            income_table(chipotle_rows)["Date"].tolist(),
-            ["2026-11-12", "2026-11-01"],
-        )
+        shown_dates = pd.to_datetime(income_table(chipotle_rows)["Date"]).dt.strftime("%Y-%m-%d")
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(income_table(chipotle_rows)["Date"]))
+        self.assertEqual(shown_dates.tolist(), ["2026-11-12", "2026-11-01"])
         self.assertEqual(chipotle_rows["Amount"].tolist(), [25, 1000])
-        self.assertNotIn("2026-11-13", income_table(chipotle_rows)["Date"].tolist())
+        self.assertNotIn("2026-11-13", shown_dates.tolist())
 
         last_lines = {line.source_id: line for line in income_lines(deposits, last_month)}
         self.assertEqual(last_lines["chipotle_nnn"].total, 1000)

@@ -149,11 +149,12 @@ def income_table(rows: pd.DataFrame) -> pd.DataFrame:
     columns = ["Date", "Description", "Amount"]
     if rows.empty:
         empty = pd.DataFrame(columns=columns)
+        empty["Date"] = pd.to_datetime(empty["Date"])
         empty["Amount"] = pd.to_numeric(empty["Amount"])
         return empty
     table = pd.DataFrame(
         {
-            "Date": pd.to_datetime(rows[INCOME_DATE]).dt.strftime("%Y-%m-%d"),
+            "Date": pd.to_datetime(rows[INCOME_DATE], errors="coerce"),
             "Description": rows[INCOME_DESCRIPTION].astype("string").fillna(""),
             "Amount": pd.to_numeric(rows[INCOME_AMOUNT]),
         }

@@ -178,6 +178,7 @@ class BofaSourceTests(unittest.TestCase):
                 "truist_auto_1001",
                 "jeep_0001",
                 "ks_statebank_805_loc_1279",
+                "morpho_loan",
             ],
         )
         expected_accounts = {
@@ -273,6 +274,7 @@ class BofaSourceTests(unittest.TestCase):
                 "Truist Auto - 1001",
                 "Stellantis Jeep - 0001",
                 "KS StateBank 805 LOC - 1279 (Prime + 1.5%)",
+                "Morpho - Loan (4.5%, BTC-backed)",
             ],
         )
         bofa = next(line for line in lines if line.source_id == "bofa")
@@ -403,6 +405,7 @@ class LoanInterestTests(unittest.TestCase):
                 "truist_auto_1001",
                 "jeep_0001",
                 "ks_statebank_805_loc_1279",
+                "morpho_loan",
             ],
         )
 
@@ -420,7 +423,11 @@ class LoanInterestTests(unittest.TestCase):
         self.assertIn("Citi AAdvantage card ending 7690", set(spend["Account"]))
         payments = loan_payment_table(transactions, account, this_month)
         self.assertTrue(pd.api.types.is_numeric_dtype(payments["Amount"]))
-        self.assertEqual(payments["Date"].tolist(), ["2026-11-08", "2026-11-03"])
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(payments["Date"]))
+        self.assertEqual(
+            pd.to_datetime(payments["Date"]).dt.strftime("%Y-%m-%d").tolist(),
+            ["2026-11-08", "2026-11-03"],
+        )
         self.assertEqual(payments["Amount"].tolist(), [999, -400])
 
     def test_ks_statebank_loc_interest_uses_the_auto_loan_formula(self) -> None:
@@ -470,6 +477,56 @@ class LoanInterestTests(unittest.TestCase):
             loan_label_for(line),
             "KS StateBank 805 LOC - 1279 (Prime + 1.5%) (8.50% APR)",
         )
+
+        from kirbancials.activity import month_to_date_spend
+
+        spend = month_to_date_spend(transactions, TODAY)
+        self.assertNotIn(account, set(spend["Account"]))
+
+    def test_morpho_loan_interest_uses_the_auto_loan_formula(self) -> None:
+        """Fake round balance. Not a wallet export."""
+        from kirbancials.loans import elapsed_days, estimated_interest
+        from kirbancials.pnl import loan_label_for
+
+        source = expense_source_by_id("morpho_loan")
+        self.assertIsNotNone(source)
+        assert source is not None
+        self.assertEqual(source.name, "Morpho - Loan (4.5%, BTC-backed)")
+        self.assertEqual(source.data_type, "loan")
+        self.assertEqual(source.accounts, ("Morpho - Loan (4.5%, BTC-backed)",))
+        self.assertEqual(source.apr, 4.50)
+
+        account = source.accounts[0]
+        balance = 2000.0
+        this_month = resolve_period("this-month", TODAY)
+        days = elapsed_days(this_month)
+        balances = pd.DataFrame(
+            {
+                "Account": [account],
+                "As Of": ["2026-11-12T08:00:00Z"],
+                "Current Balance": [balance],
+            }
+        )
+        transactions = pd.DataFrame(
+            [
+                {
+                    "Account": account,
+                    "Date": pd.Timestamp("2026-11-04"),
+                    "Amount": -40,
+                    "Pending": False,
+                    "Category": "Loan Payments",
+                    "Merchant": "SAMPLE LENDER",
+                    "Description": "LOAN PAYMENT",
+                }
+            ]
+        )
+        lines = expense_lines(transactions, pd.DataFrame(), this_month, balances)
+        line = next(item for item in lines if item.source_id == source.id)
+        expected = balance * 4.50 / 100 / 365 * days
+        self.assertAlmostEqual(line.total, expected)
+        self.assertAlmostEqual(line.interest, expected)
+        self.assertAlmostEqual(line.total, estimated_interest(balance, source.apr or 0, days))
+        self.assertEqual(loan_label_for(line), "Morpho - Loan (4.5%, BTC-backed) (4.50% APR)")
 
         from kirbancials.activity import month_to_date_spend
 
