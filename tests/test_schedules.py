@@ -174,7 +174,13 @@ class SchedulePeriodTests(unittest.TestCase):
         lines = expense_lines(transactions, pd.DataFrame(), this_month, schedule=schedule)
         self.assertEqual(
             [line.source_id for line in lines if line.data_type == "loan"],
-            ["wf_auto_7635", "wf_auto_8492", "truist_auto_1001", "jeep_0001"],
+            [
+                "wf_auto_7635",
+                "wf_auto_8492",
+                "truist_auto_1001",
+                "jeep_0001",
+                "ks_statebank_805_loc_1279",
+            ],
         )
         expenses = sum(line.total for line in lines)
         self.assertAlmostEqual(expenses, 11.5)

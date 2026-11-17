@@ -148,6 +148,14 @@ EXPENSE_SOURCES: tuple[ExpenseSource, ...] = (
         accounts=("Stellantis Jeep Loan ending 0001",),
         apr=5.99,
     ),
+    # Variable rate: WSJ Prime 7.00% (effective 2026-09-17) + 1.50%. Update apr when prime changes.
+    ExpenseSource(
+        id="ks_statebank_805_loc_1279",
+        name="KS StateBank 805 LOC - 1279 (Prime + 1.5%)",
+        data_type="loan",
+        accounts=("KS StateBank 805 LOC - 1279 (Prime + 1.5%)",),
+        apr=8.50,
+    ),
 )
 
 INCOME_SOURCES: tuple[IncomeSource, ...] = (
