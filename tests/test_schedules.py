@@ -78,7 +78,8 @@ class ScheduleParsingTests(unittest.TestCase):
             list(table.columns),
             ["Date", "Payment", "Interest", "Principal", "Remaining Balance"],
         )
-        self.assertEqual(table["Date"].tolist(), ["2026-11-01"])
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(table["Date"]))
+        self.assertEqual(pd.to_datetime(table["Date"]).dt.strftime("%Y-%m-%d").tolist(), ["2026-11-01"])
         self.assertEqual(table["Interest"].tolist(), [3.5])
         self.assertEqual(table["Principal"].tolist(), [11.5])
         self.assertEqual(table["Payment"].tolist(), [15.0])
@@ -180,6 +181,7 @@ class SchedulePeriodTests(unittest.TestCase):
                 "truist_auto_1001",
                 "jeep_0001",
                 "ks_statebank_805_loc_1279",
+                "morpho_loan",
             ],
         )
         expenses = sum(line.total for line in lines)

@@ -156,6 +156,13 @@ EXPENSE_SOURCES: tuple[ExpenseSource, ...] = (
         accounts=("KS StateBank 805 LOC - 1279 (Prime + 1.5%)",),
         apr=8.50,
     ),
+    ExpenseSource(
+        id="morpho_loan",
+        name="Morpho - Loan (4.5%, BTC-backed)",
+        data_type="loan",
+        accounts=("Morpho - Loan (4.5%, BTC-backed)",),
+        apr=4.50,
+    ),
 )
 
 INCOME_SOURCES: tuple[IncomeSource, ...] = (

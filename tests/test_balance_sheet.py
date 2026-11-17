@@ -18,7 +18,9 @@ from kirbancials.balance_sheet import (
     OTHER_LOAN_GROUP,
     TOTAL_GROUP,
     VALUATION_NOTE,
+    SheetRow,
     build_balance_sheet,
+    sheet_display,
     show_money,
     show_percent,
 )
@@ -463,6 +465,71 @@ class BalanceSheetTests(unittest.TestCase):
         self.assertAlmostEqual(sheet.net_worth, 100)
         self.assertEqual(format_signed_money(sheet.net_worth), ":green[$100.00]")
         self.assertEqual(format_signed_money(0), "$0.00")
+
+
+class NumericSortTests(unittest.TestCase):
+    def test_balance_sorts_numerically_and_totals_stay_out(self) -> None:
+        """Fake balances. $1,500 would sort ahead of $200 if the column were text."""
+        from kirbancials.formatting import format_money
+
+        rows = [
+            SheetRow(CREDIT_GROUP, "Sample card ending 1500", 1500, "item"),
+            SheetRow(CREDIT_GROUP, "Sample card ending 0200", 200, "item"),
+            SheetRow(CREDIT_GROUP, "Sample card ending 0400", 400, "item"),
+            SheetRow(CREDIT_GROUP, "Subtotal", 2100, "subtotal"),
+            SheetRow(TOTAL_GROUP, "Total liabilities", 2100, "total"),
+        ]
+        frame, summaries = sheet_display(rows, "Balance")
+        self.assertTrue(pd.api.types.is_numeric_dtype(frame["Balance"]))
+        self.assertEqual(
+            frame.sort_values("Balance")["Item"].tolist(),
+            ["Sample card ending 0200", "Sample card ending 0400", "Sample card ending 1500"],
+        )
+        self.assertEqual(
+            frame.sort_values("Balance", ascending=False)["Item"].tolist(),
+            ["Sample card ending 1500", "Sample card ending 0400", "Sample card ending 0200"],
+        )
+        self.assertNotIn("Subtotal", set(frame["Item"]))
+        self.assertNotIn("Total liabilities", set(frame["Item"]))
+        self.assertEqual([row.role for row in summaries], ["subtotal", "total"])
+        as_text = [format_money(amount) for amount in (1500, 200, 400)]
+        self.assertEqual(sorted(as_text)[0], "$1,500.00")
+        self.assertNotEqual(
+            sorted(as_text),
+            [format_money(amount) for amount in (200, 400, 1500)],
+        )
+
+    def test_rendered_balance_column_stays_numeric(self) -> None:
+        from streamlit.testing.v1 import AppTest
+
+        script = """
+from kirbancials.balance_sheet import CREDIT_GROUP, TOTAL_GROUP, SheetRow, _show_sheet
+
+_show_sheet(
+    [
+        SheetRow(CREDIT_GROUP, "Sample card ending 1500", 1500.0, "item"),
+        SheetRow(CREDIT_GROUP, "Sample card ending 0200", 200.0, "item"),
+        SheetRow(CREDIT_GROUP, "Subtotal", 1700.0, "subtotal"),
+        SheetRow(TOTAL_GROUP, "Total liabilities", 1700.0, "total"),
+    ],
+    amount_label="Balance",
+)
+"""
+        app = AppTest.from_string(script, default_timeout=30).run()
+        self.assertEqual(list(app.exception), [])
+        frame = app.dataframe[0].value
+        self.assertTrue(pd.api.types.is_numeric_dtype(frame["Balance"]))
+        self.assertEqual(
+            frame.sort_values("Balance")["Item"].tolist(),
+            ["Sample card ending 0200", "Sample card ending 1500"],
+        )
+        self.assertNotIn("Subtotal", set(frame["Item"]))
+        self.assertNotIn("Total liabilities", set(frame["Item"]))
+        rendered = "\n".join(node.value for node in app.markdown)
+        self.assertIn("Credit cards subtotal", rendered)
+        self.assertIn("Total liabilities", rendered)
+        self.assertIn("$1,700.00", rendered)
+        self.assertIn('"format": "dollar"', app.dataframe[0].proto.columns)
 
 
 class NavigationTests(unittest.TestCase):

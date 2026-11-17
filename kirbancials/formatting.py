@@ -15,6 +15,24 @@ import pandas as pd
 MISSING = "—"
 
 
+def percent_number(value: object) -> float:
+    """Percent points from a number or a label such as '+5.6%'. Missing is NaN."""
+    if value is None:
+        return float("nan")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        number = float(value)
+        if math.isnan(number) or math.isinf(number):
+            return float("nan")
+        return number
+    text = str(value).strip().replace("%", "").replace("+", "").replace(",", "")
+    if text in {"", MISSING, "—"}:
+        return float("nan")
+    try:
+        return float(text)
+    except ValueError:
+        return float("nan")
+
+
 def format_money(value: object) -> str:
     """Format a scalar amount. Missing values become an em dash."""
     if value is None:
@@ -68,17 +86,68 @@ def money_column_config(columns: Sequence[str]) -> dict[str, object]:
     }
 
 
-def show_money_table(frame: pd.DataFrame, money_columns: Sequence[str]) -> None:
-    """Show a table with money columns left numeric and formatted as currency."""
+def percent_column_config(
+    columns: Sequence[str],
+    *,
+    format: str = "%.2f%%",
+) -> dict[str, object]:
+    """Number column config so a percent column sorts by its numeric value."""
+    import streamlit as st
+
+    return {
+        column: st.column_config.NumberColumn(format=format)
+        for column in columns
+    }
+
+
+def _datetime_column_config(display: pd.DataFrame) -> dict[str, object]:
+    """Date or datetime config for columns that are already real datetimes."""
+    import streamlit as st
+
+    config: dict[str, object] = {}
+    for column in display.columns:
+        series = display[column]
+        if not pd.api.types.is_datetime64_any_dtype(series):
+            continue
+        present = series.dropna()
+        has_clock_time = False
+        if not present.empty:
+            clock = pd.to_datetime(present)
+            has_clock_time = bool(
+                ((clock.dt.hour != 0) | (clock.dt.minute != 0) | (clock.dt.second != 0)).any()
+            )
+        if has_clock_time:
+            config[column] = st.column_config.DatetimeColumn(format="YYYY-MM-DD HH:mm")
+        else:
+            config[column] = st.column_config.DateColumn(format="YYYY-MM-DD")
+    return config
+
+
+def show_money_table(
+    frame: pd.DataFrame,
+    money_columns: Sequence[str],
+    percent_columns: Sequence[str] = (),
+    *,
+    percent_format: str = "%.2f%%",
+) -> None:
+    """Show a table whose money, percent, and date columns stay sortable values.
+
+    Money and percent columns are coerced to float. Datetime columns stay
+    datetimes. Streamlit formats them for display and sorts on the values.
+    """
     import streamlit as st
 
     display = frame.copy()
-    present = [column for column in money_columns if column in display.columns]
-    for column in present:
+    money = [column for column in money_columns if column in display.columns]
+    percents = [column for column in percent_columns if column in display.columns]
+    for column in [*money, *percents]:
         display[column] = pd.to_numeric(display[column], errors="coerce")
+    config = money_column_config(money)
+    config.update(percent_column_config(percents, format=percent_format))
+    config.update(_datetime_column_config(display))
     st.dataframe(
         display,
         width="stretch",
         hide_index=True,
-        column_config=money_column_config(present),
+        column_config=config,
     )

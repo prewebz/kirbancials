@@ -276,14 +276,13 @@ def schedule_payment_table(rows: pd.DataFrame, period: Period) -> pd.DataFrame:
     chosen = _ordered(_in_period(rows, period))
     if chosen.empty:
         empty = pd.DataFrame(columns=columns)
+        empty["Date"] = pd.to_datetime(empty["Date"])
         for column in columns[1:]:
             empty[column] = pd.to_numeric(empty[column])
         return empty
     table = pd.DataFrame(
         {
-            "Date": chosen["payment_date"].map(
-                lambda value: _as_date(value).isoformat() if _as_date(value) else ""
-            ),
+            "Date": pd.to_datetime(chosen["payment_date"], errors="coerce"),
             "Payment": pd.to_numeric(chosen["payment"]),
             "Interest": pd.to_numeric(chosen["interest"]),
             "Principal": pd.to_numeric(chosen["principal"]),

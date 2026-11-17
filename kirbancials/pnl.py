@@ -520,7 +520,7 @@ def _load_income() -> tuple[pd.DataFrame, str | None]:
 def _transaction_table(frame: pd.DataFrame) -> pd.DataFrame:
     display = pd.DataFrame(
         {
-            "Date": pd.to_datetime(frame["Date"]).dt.strftime("%Y-%m-%d"),
+            "Date": pd.to_datetime(frame["Date"], errors="coerce"),
             "Merchant": frame["Merchant"],
             "Amount": frame["Amount"],
             "Pending": frame["Pending"].map(lambda pending: "Pending" if bool(pending) else "Posted"),
@@ -547,8 +547,7 @@ def _statement_table(frame: pd.DataFrame) -> pd.DataFrame:
     ]
     display = frame.loc[:, columns].copy()
     if "Statement Closing Date" in display.columns:
-        parsed = pd.to_datetime(display["Statement Closing Date"], errors="coerce")
-        display["Statement Closing Date"] = (
-            parsed.dt.strftime("%Y-%m-%d").fillna("").replace("NaT", "")
+        display["Statement Closing Date"] = pd.to_datetime(
+            display["Statement Closing Date"], errors="coerce"
         )
     return display

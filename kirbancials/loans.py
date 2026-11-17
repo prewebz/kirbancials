@@ -61,21 +61,21 @@ def loan_payment_table(transactions: pd.DataFrame, account: str, period: Period)
     """Payments for one loan in the period, newest first. Amount stays numeric."""
     columns = ["Date", "Description", "Amount"]
     if transactions.empty or "Account" not in transactions.columns:
-        return pd.DataFrame(columns=columns)
+        return _empty_payment_table(columns)
     names = transactions["Account"].astype("string").fillna("").str.strip()
     rows = transactions.loc[names == account].copy()
     if rows.empty:
-        return pd.DataFrame(columns=columns)
+        return _empty_payment_table(columns)
     dates = pd.to_datetime(rows["Date"], errors="coerce")
     rows = rows.loc[dates.notna()].copy()
     rows["_day"] = dates.loc[rows.index].dt.date
     rows = rows.loc[rows["_day"].map(period.contains)]
     if rows.empty:
-        return pd.DataFrame(columns=columns)
+        return _empty_payment_table(columns)
     description = _description(rows)
     table = pd.DataFrame(
         {
-            "Date": pd.to_datetime(rows["_day"]).dt.strftime("%Y-%m-%d"),
+            "Date": pd.to_datetime(rows["_day"], errors="coerce"),
             "Description": description,
             "Amount": pd.to_numeric(rows["Amount"], errors="coerce"),
             "_sort": rows["_day"],
@@ -83,6 +83,15 @@ def loan_payment_table(transactions: pd.DataFrame, account: str, period: Period)
     )
     table = table.sort_values(["_sort", "Description"], ascending=[False, True], kind="mergesort")
     return table.loc[:, columns].reset_index(drop=True)
+
+
+def _empty_payment_table(columns: list[str]) -> pd.DataFrame:
+    empty = pd.DataFrame(columns=columns)
+    if "Date" in empty.columns:
+        empty["Date"] = pd.to_datetime(empty["Date"])
+    if "Amount" in empty.columns:
+        empty["Amount"] = pd.to_numeric(empty["Amount"])
+    return empty
 
 
 def _description(rows: pd.DataFrame) -> pd.Series:

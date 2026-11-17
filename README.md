@@ -15,12 +15,17 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 export APP_PASSWORD='choose-a-password'
+export AUTH_COOKIE_SECRET='choose-a-long-random-secret'
 streamlit run app.py
 ```
 
-Open the URL Streamlit prints and log in with that password. Log out from the sidebar.
+Open the URL Streamlit prints and log in with that password. **Refresh data** is at the top of the sidebar, and a smaller **Refresh** is in the page header. Both clear Streamlit's `st.cache_data` and `st.cache_resource` caches, read the env vars and files again, and rerun. You stay logged in. The `Last refreshed:` caption uses America/Phoenix.
 
-If `APP_PASSWORD` is unset, the app shows an error and stops. It does not render balances, charts, or tables until the password matches. The comparison uses `hmac.compare_digest`.
+A browser reload keeps the login for 30 days. The `kirbancials_auth` cookie is an HMAC-SHA256 token, not the password. The signing key comes from `APP_PASSWORD` and `AUTH_COOKIE_SECRET`, and the signed payload includes the expiry time. On load the app reads `st.context.cookies` and skips the password when the token is valid. Changing either value makes old cookies fail. **Log out** clears the cookie.
+
+The cookie is `SameSite=Lax`. It is `Secure` on HTTPS, which is how Render serves the app. Local HTTP omits `Secure` so the browser will store the cookie. It is not `HttpOnly`: the password check runs in the Streamlit session, and a page script cannot set `HttpOnly`. If `AUTH_COOKIE_SECRET` is unset, login still lasts until the tab session ends, and the sidebar says remembered login is off.
+
+If `APP_PASSWORD` is unset, the app shows an error and stops. It does not render balances, charts, or tables until the password matches. The comparison uses `hmac.compare_digest`. There is no separate Balance Sheet password.
 
 With no data configured, the app loads the bundled samples and shows a banner that the numbers are fake.
 
@@ -166,7 +171,7 @@ Total assets are cash plus each asset's market value. Total liabilities are the 
 
 Under the cards, one bordered card per asset shows the market value with its valuation date and source, the cost basis, and the gain or loss versus cost. The linked loan is the schedule's current remaining balance for that Loan ID. Equity is the market value minus that balance. With no linked loan, equity is the market value and the loan is `n/a`. LTV is the loan divided by the market value. When an income source id is set, the card also shows trailing-12-month cash income for that source, the yield (that income divided by market value), and cash on equity (that income minus the linked loan's trailing-12-month scheduled payments, divided by equity). A missing input is `n/a`.
 
-The assets table lists cash, then each asset, once. There is no category subtotal. One Total assets line follows those rows. Cash is the current balance of accounts labeled `depository`, `cash`, `checking`, or `savings`. The liabilities table groups mortgages and other property loans from the schedule, other loans (auto loans and balance rows typed as loans), and credit cards. A group with two or more rows has a subtotal. A group with one row does not. A balance row whose account is a scheduled loan's Loan ID, or that loan's `Lender - Loan Name`, is not listed again. The schedule's remaining balance is the one that counts. The match ignores capitals.
+The assets table lists cash, then each asset, once. There is no category subtotal. Total assets is a line under the table. Cash is the current balance of accounts labeled `depository`, `cash`, `checking`, or `savings`. The liabilities table lists mortgages and other property loans from the schedule, other loans (auto loans and balance rows typed as loans), and credit cards. A group with two or more rows has a subtotal under the table. A group with one row does not. Dollar, percent, and date columns stay numbers, so clicking a header sorts by value. The cells still show `$` with commas, percents, and dates. A balance row whose account is a scheduled loan's Loan ID, or that loan's `Lender - Loan Name`, is not listed again. The schedule's remaining balance is the one that counts. The match ignores capitals.
 
 The bottom of the page says `Market values are entered manually from appraisals; update when a new valuation is available.`
 
@@ -288,12 +293,13 @@ Statement loading lives in `kirbancials/data.py`. Transactions and balances live
 - Health check: `/_stcore/health`
 - `PYTHON_VERSION`: `3.11.9`
 - `APP_PASSWORD`: `sync: false`, so the Blueprint prompts for it instead of storing it in the repo
+- `AUTH_COOKIE_SECRET`: `sync: false`. A long random string that signs the remembered-login cookie. Set it on the service **Environment** page. Changing it signs everyone out of remembered sessions.
 
 Create the service from the Blueprint:
 
 [https://dashboard.render.com/blueprint/new?repo=https://github.com/prewebz/kirbancials](https://dashboard.render.com/blueprint/new?repo=https://github.com/prewebz/kirbancials)
 
-Apply it from the `main` branch. On first create, Render asks for `APP_PASSWORD`. That prompt does not run again on later Blueprint syncs; set or change the password on the service **Environment** page, then redeploy.
+Apply it from the `main` branch. On first create, Render asks for `APP_PASSWORD` and `AUTH_COOKIE_SECRET`. That prompt does not run again on later Blueprint syncs; set or change them on the service **Environment** page, then redeploy.
 
 The service will not show the dashboard until `APP_PASSWORD` is set.
 

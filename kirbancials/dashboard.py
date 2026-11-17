@@ -45,6 +45,7 @@ from kirbancials.formatting import format_money, show_money_table
 from kirbancials.sources import loan_accounts
 from kirbancials.schema import (
     ACCOUNT_COL,
+    DATE_COLS,
     INCOME_COL,
     KIND_COL,
     NUM_COLS,
@@ -320,12 +321,16 @@ def _display_table(frame: pd.DataFrame) -> pd.DataFrame:
     display = frame.loc[:, columns].copy()
     if KIND_COL in display.columns:
         display[KIND_COL] = display[KIND_COL].map(lambda kind: kind_spec(str(kind)).label)
-    return _clean_text(display)
+    display = _clean_text(display)
+    for column in DATE_COLS:
+        if column in display.columns:
+            display[column] = pd.to_datetime(display[column], errors="coerce")
+    return display
 
 
 def _balance_table(frame: pd.DataFrame) -> pd.DataFrame:
     display = frame.copy()
-    display[BAL_AS_OF] = display[BAL_AS_OF].map(lambda value: format_synced(value) or "")
+    display[BAL_AS_OF] = pd.to_datetime(display[BAL_AS_OF], utc=True, errors="coerce")
     display = display.rename(columns={BAL_ACCOUNT: "Account"})
     return _clean_text(display)
 
@@ -333,7 +338,7 @@ def _balance_table(frame: pd.DataFrame) -> pd.DataFrame:
 def _transaction_table(frame: pd.DataFrame) -> pd.DataFrame:
     display = pd.DataFrame(
         {
-            "Date": frame[TXN_DATE].dt.strftime("%Y-%m-%d"),
+            "Date": pd.to_datetime(frame[TXN_DATE], errors="coerce"),
             "Account": frame[TXN_ACCOUNT],
             "Merchant": frame[TXN_MERCHANT],
             "Amount": frame[TXN_AMOUNT],
@@ -347,7 +352,7 @@ def _transaction_table(frame: pd.DataFrame) -> pd.DataFrame:
 def _money_table(frame: pd.DataFrame) -> pd.DataFrame:
     display = frame.copy()
     if "Date" in display.columns:
-        display["Date"] = pd.to_datetime(display["Date"]).dt.strftime("%Y-%m-%d")
+        display["Date"] = pd.to_datetime(display["Date"], errors="coerce")
     return _clean_text(display)
 
 

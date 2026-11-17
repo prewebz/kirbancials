@@ -24,7 +24,7 @@ from kirbancials.activity import (
 )
 from kirbancials.assets import NO_ASSETS_NOTE, AssetLoad, AssetRecord, resolve_assets
 from kirbancials.data import FinanceDataError
-from kirbancials.formatting import format_money, format_signed_money
+from kirbancials.formatting import format_money, format_signed_money, show_money_table
 from kirbancials.income import load_income, received_for_source, resolve_income
 from kirbancials.periods import Period, resolve_period
 from kirbancials.schedules import (
@@ -270,15 +270,36 @@ def _render_position(position: AssetPosition) -> None:
             third[2].metric("Cash on equity", show_percent(position.cash_on_equity))
 
 
-def _show_sheet(rows: Sequence[SheetRow], amount_label: str = "Amount") -> None:
+def sheet_display(
+    rows: Sequence[SheetRow],
+    amount_label: str = "Amount",
+) -> tuple[pd.DataFrame, tuple[SheetRow, ...]]:
+    """Line items as a numeric frame, and subtotal or total rows kept apart.
+
+    A header click sorts the frame by the amount. Summary rows are not in it,
+    so they cannot land in the middle of that sort.
+    """
+    items = [row for row in rows if row.role == "item"]
+    summaries = tuple(row for row in rows if row.role != "item")
+    amounts = [float("nan") if row.amount is None else float(row.amount) for row in items]
     frame = pd.DataFrame(
         {
-            "Category": [row.group for row in rows],
-            "Item": [row.item for row in rows],
-            amount_label: [show_money(row.amount) for row in rows],
+            "Category": [row.group for row in items],
+            "Item": [row.item for row in items],
+            amount_label: pd.to_numeric(pd.Series(amounts, dtype="float64")),
         }
     )
-    st.dataframe(frame, width="stretch", hide_index=True)
+    return frame, summaries
+
+
+def _show_sheet(rows: Sequence[SheetRow], amount_label: str = "Amount") -> None:
+    frame, summaries = sheet_display(rows, amount_label)
+    show_money_table(frame, [amount_label])
+    for row in summaries:
+        label = row.item if row.role == "total" else f"{row.group} subtotal"
+        label_col, amount_col = st.columns([4, 1])
+        label_col.markdown(f"**{label}**" if row.role == "total" else label)
+        amount_col.markdown(f"**{show_money(row.amount)}**")
 
 
 def _load_balance_rows() -> tuple[pd.DataFrame, str | None, bool]:
