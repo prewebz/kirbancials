@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+from streamlit.testing.v1 import AppTest
 
 from kirbancials.periods import add_months, format_period, period_choice, resolve_period
 from kirbancials.sources import EXPENSE_SOURCES, expense_source_by_id, expense_source_for_account
@@ -534,24 +535,63 @@ class LoanInterestTests(unittest.TestCase):
         self.assertNotIn(account, set(spend["Account"]))
 
 
+PAGE_TITLES = {
+    "profit_and_loss.py": "Profit & Loss",
+    "balance_sheet.py": "Balance Sheet",
+    "bills.py": "Bills",
+    "vwh_pl.py": "VWH P&L",
+    "source_detail.py": "Source detail",
+    "daily.py": "Daily spending",
+    "statements.py": "Monthly statements",
+}
+
+
 class PageTitleTests(unittest.TestCase):
-    def test_profit_and_loss_title_is_compact_and_other_pages_keep_theirs(self) -> None:
-        view = (ROOT / "views" / "profit_and_loss.py").read_text()
-        self.assertIn('class="pnl-title"', view)
-        self.assertIn("Profit &amp; Loss", view)
-        self.assertNotIn("st.title(", view)
-        self.assertIn("padding-top: 3.9rem", view)
-        self.assertIn("@media (max-width: 768px)", view)
-        for name in (
-            "balance_sheet.py",
-            "bills.py",
-            "vwh_pl.py",
-            "daily.py",
-            "statements.py",
-            "source_detail.py",
-        ):
-            other = (ROOT / "views" / name).read_text()
-            self.assertIn("st.title(", other, name)
+    def test_every_page_uses_the_shared_compact_title(self) -> None:
+        for name, title in PAGE_TITLES.items():
+            view = (ROOT / "views" / name).read_text()
+            self.assertIn(f'render_page_title("{title}")', view, name)
+            self.assertNotIn("st.title(", view, name)
+            self.assertNotIn("pnl-title", view, name)
+            self.assertNotIn("<style>", view, name)
+
+    def test_compact_title_is_smaller_than_the_old_h1_and_above_sections(self) -> None:
+        app = AppTest.from_string(
+            """
+from kirbancials.page_title import render_page_title
+import streamlit as st
+
+render_page_title("Profit & Loss")
+st.subheader("Income")
+""",
+            default_timeout=30,
+        ).run()
+        self.assertEqual(list(app.exception), [])
+        self.assertEqual(list(app.title), [])
+        self.assertEqual(app.subheader[0].value, "Income")
+        body = app.html[0].value
+        self.assertIn('class="page-title"', body)
+        self.assertIn("Profit &amp; Loss", body)
+        self.assertNotIn("Profit & Loss", body.split("<p", 1)[-1])
+        self.assertIn("padding-top: 3.9rem", body)
+        self.assertIn("font-size: 1.125rem", body)
+        self.assertIn("@media (max-width: 768px)", body)
+        self.assertIn('div[data-testid="stHeading"] h3', body)
+        self.assertIn("font-size: 1rem", body)
+        self.assertIn("font-size: 0.9375rem", body)
+        title_rule = body.split(".page-title {", 1)[1].split("}", 1)[0]
+        section_rule = body.split('div[data-testid="stHeading"] h3 {', 1)[1].split("}", 1)[0]
+        self.assertIn("font-size: 1.125rem", title_rule)
+        self.assertIn("font-size: 1rem", section_rule)
+        self.assertNotIn("1.125rem", section_rule)
+
+    def test_last_refreshed_stays_in_the_sidebar_only(self) -> None:
+        text = (ROOT / "app.py").read_text()
+        before, sidebar = text.split("with st.sidebar:", 1)
+        self.assertNotIn("refreshed_caption()", before)
+        self.assertIn("st.caption(refreshed_caption())", sidebar)
+        self.assertIn('key="refresh_header"', before)
+        self.assertIn('key="refresh_sidebar"', sidebar)
 
 
 if __name__ == "__main__":

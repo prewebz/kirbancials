@@ -1,8 +1,7 @@
 """Daily transaction view."""
 
-import streamlit as st
-
 from kirbancials.dashboard import render_daily_page
+from kirbancials.page_title import render_page_title
 
-st.title("Daily spending")
+render_page_title("Daily spending")
 render_daily_page()

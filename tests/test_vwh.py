@@ -347,7 +347,7 @@ class VwhNavigationTests(unittest.TestCase):
         self.assertIn("VWH P&L", links[3])
         self.assertLess(text.index("require_login()"), text.index("navigation.run()"))
         view = (ROOT / "views" / "vwh_pl.py").read_text()
-        self.assertIn('st.title("VWH P&L")', view)
+        self.assertIn('render_page_title("VWH P&L")', view)
         self.assertIn("render_vwh_pl", view)
         self.assertNotIn("require_login", view)
         self.assertNotIn("APP_PASSWORD", view)

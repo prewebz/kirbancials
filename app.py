@@ -28,9 +28,7 @@ navigation = st.navigation(
     position="hidden",
 )
 
-caption_col, refresh_col = st.columns([8, 1])
-with caption_col:
-    st.caption(refreshed_caption())
+_, refresh_col = st.columns([8, 1])
 with refresh_col:
     if st.button("Refresh", key="refresh_header"):
         refresh_data()
