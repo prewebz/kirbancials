@@ -2,7 +2,7 @@
 
 Personal finance dashboard for credit card statement summaries and other expenses. It is a [Streamlit](https://streamlit.io/) app meant to run as a free Python web service on [Render](https://render.com/).
 
-After login the landing page is **Profit & Loss**. **Balance Sheet** is the next page in the sidebar. **VWH P&L** follows Balance Sheet. Profit & Loss totals cash income and expenses for a period you pick. Each expense name links to that source, and each income total links to that income source. **Daily spending** and **Monthly statements** stay available from the sidebar.
+After login the landing page is **Profit & Loss**. **Balance Sheet** is the next page in the sidebar. **Bills** follows Balance Sheet. **VWH P&L** follows Bills. Profit & Loss totals cash income and expenses for a period you pick. Each expense name links to that source, and each income total links to that income source. **Daily spending** and **Monthly statements** stay available from the sidebar.
 
 Expense sources are registered in `kirbancials/sources.py`. Citibank - 7690 reads transactions for `Citi AAdvantage card ending 7690`. Nordstrom reads statement months for `Nordstrom card ending 5488`. Any other Account in the data is still listed under its own name. See [Adding sources](#adding-sources).
 
@@ -25,7 +25,7 @@ A browser reload keeps the login for 30 days. The `kirbancials_auth` cookie is a
 
 The cookie is `SameSite=Lax`. It is `Secure` on HTTPS, which is how Render serves the app. Local HTTP omits `Secure` so the browser will store the cookie. It is not `HttpOnly`: the password check runs in the Streamlit session, and a page script cannot set `HttpOnly`. If `AUTH_COOKIE_SECRET` is unset, login still lasts until the tab session ends, and the sidebar says remembered login is off.
 
-If `APP_PASSWORD` is unset, the app shows an error and stops. It does not render balances, charts, or tables until the password matches. The comparison uses `hmac.compare_digest`. There is no separate Balance Sheet password.
+If `APP_PASSWORD` is unset, the app shows an error and stops. It does not render balances, charts, or tables until the password matches. The comparison uses `hmac.compare_digest`. There is no separate password for Balance Sheet, Bills, or any other page.
 
 With no data configured, the app loads the bundled samples and shows a banner that the numbers are fake.
 
@@ -175,6 +175,84 @@ The assets table lists cash, then each asset, once. There is no category subtota
 
 The bottom of the page says `Market values are entered manually from appraisals; update when a new valuation is available.`
 
+### Bills
+
+Bills is its own sidebar page, after Balance Sheet. Logging in once covers it. The page has three tabs: **Bills**, **Property Taxes**, and **Entity Fees**. Each tab reads its own environment variable. The value is the raw CSV text, not gzipped. If that variable is missing or blank, the tab says so and the rest of the page still loads. Do not commit these CSVs. On Render, set them on the service **Environment** page the same way as the other CSV variables.
+
+Real rows stay out of git. Tests use fake round numbers in the test file.
+
+**Export to Excel** downloads one workbook, `kirbancials-bills.xlsx`, with three sheets: `Bills`, `Property Taxes`, and `Entity Fees`. Each sheet has a totals row when it has any data rows. Dates are real dates. Dollar columns use a currency format. Interest rate uses a percent format. The workbook includes every bill, not only the type selected on screen. **Download CSV** on a tab downloads that tab. On Bills, the CSV follows the type filter. The CSV's last row is `Total` when the tab has rows. Dates in the CSV are `YYYY-MM-DD`. Money and the interest rate are plain numbers. The interest rate stays in percent points, such as `19.99`.
+
+A CSV that cannot be read shows a warning and no rows for that tab. The warning does not include cells from the file.
+
+#### Bills (`FINANCE_BILLS_CSV`)
+
+The header row is exactly:
+
+`Description,Type,Current Balance,Statement Balance,Amount Paid,Amount Still Due,Interest Rate,Statement Ending Date,Due Date,Paid Date,Notes`
+
+`Account Match` is optional. Leave the column off when every current balance is typed in.
+
+| Column | Role |
+| --- | --- |
+| Description | Required. The row name. |
+| Type | Free text, such as `Personal`, `Business`, `Other`, `VWH`, or `Both`. The page filters on the values in the file. A blank type is listed as `(No type)`. |
+| Current Balance | Plain decimal. May be blank. See amounts below. |
+| Statement Balance | Plain decimal. May be blank. |
+| Amount Paid | Plain decimal. May be blank. |
+| Amount Still Due | Plain decimal. May be blank. The totals row adds this column as entered. It is not recomputed from the other amounts. |
+| Interest Rate | Percent points, such as `19.99` or `19.99%`. Both mean 19.99%. Do not use a fraction such as `0.1999`. May be blank. |
+| Statement Ending Date | `YYYY-MM-DD`. `M/D/YYYY` is also accepted. May be blank. |
+| Due Date | Same date forms. The table sorts by this date. A blank due date sorts last. |
+| Paid Date | Same date forms. May be blank. |
+| Notes | Free text. May be blank. |
+| Account Match | Optional. The `Account` name from `FINANCE_BALANCES_CSV`. Capitals and surrounding spaces are ignored. When it names a credit card or a loan, Current Balance on the page is that account's latest balance. A checking or savings account is not used. A name that is not in the balance file keeps the Current Balance cell. |
+
+Amounts are plain decimals, such as `1000.00` or `1000`. A leading `$`, thousands separators, and parentheses for a negative (`($12.00)`) are also accepted. Any other text makes the file unreadable.
+
+The page compares due dates with today's date, the same clock as the Balance Sheet `As of` line. A row is red when the due date is before today and Amount Still Due is greater than zero. A row is amber when the due date is today or at most 7 days later. A blank due date is neither.
+
+The totals row adds Current Balance, Statement Balance, Amount Paid, and Amount Still Due for the rows in the type filter. A blank amount counts as zero in that total.
+
+#### Property taxes (`FINANCE_PROP_TAXES_CSV`)
+
+The header row is exactly:
+
+`Property,Total Amount Due,1st Half,Amount Paid,Remaining Due,Notes`
+
+| Column | Role |
+| --- | --- |
+| Property | Required. |
+| Total Amount Due | Plain decimal. May be blank. |
+| 1st Half | Plain decimal. May be blank. |
+| Amount Paid | Plain decimal. May be blank. |
+| Remaining Due | Plain decimal. May be blank. Not recomputed. |
+| Notes | Free text. May be blank. |
+
+The totals row adds Total Amount Due, 1st Half, Amount Paid, and Remaining Due. Rows stay in file order.
+
+#### Entity fees (`FINANCE_ENTITY_FEES_CSV`)
+
+LLC registered agent fees and franchise taxes. The header row is exactly:
+
+`LLC,State,Tax File Number,Registered Agent,Status,Reg Agent Fee,Reg Agent Due Date,Franchise Tax,Franchise Tax Due Date,Paid From,Notes`
+
+| Column | Role |
+| --- | --- |
+| LLC | Required. |
+| State | Free text. May be blank. |
+| Tax File Number | Free text. May be blank. |
+| Registered Agent | Free text. May be blank. |
+| Status | Free text. May be blank. |
+| Reg Agent Fee | Plain decimal. May be blank. |
+| Reg Agent Due Date | `YYYY-MM-DD`, or `M/D/YYYY`. May be blank. |
+| Franchise Tax | Plain decimal. May be blank. |
+| Franchise Tax Due Date | Same date forms. May be blank. |
+| Paid From | The account the fee was paid from. Free text. May be blank. |
+| Notes | Free text. May be blank. |
+
+The totals row adds Reg Agent Fee and Franchise Tax only. Rows stay in file order.
+
 ## Profit & Loss
 
 The period picker is at the top of the page. The choices are This month (the default), Last month, Quarter to date, Year to date, and Last 12 months. The exact dates are shown under the selector. This month, quarter to date, year to date, and the last 12 months end today. Last month is the previous calendar month, from the 1st through the last day. Quarter to date starts on the first day of the current calendar quarter. The last 12 months start the day after the same date a year ago.
@@ -278,7 +356,7 @@ A profit-and-loss CSV that cannot be read shows a warning and no figures. The wa
 - Statement-file income: set `Source Kind` to `income` and put the amount in `Income` (or in `Net Spend` if that column is the amount). That stays on the statement summary. It does not change Profit & Loss cash income.
 - A new kind with its own total rules: add one `SourceKind` entry in `kirbancials/schema.py`.
 
-Statement loading lives in `kirbancials/data.py`. Transactions and balances live in `kirbancials/activity.py`. Asset rows live in `kirbancials/assets.py`. The balance sheet lives in `kirbancials/balance_sheet.py`. The VWH portfolio lives in `kirbancials/vwh.py`. Trending math lives in `kirbancials/vwh_trend.py`.
+Statement loading lives in `kirbancials/data.py`. Transactions and balances live in `kirbancials/activity.py`. Asset rows live in `kirbancials/assets.py`. The balance sheet lives in `kirbancials/balance_sheet.py`. Bills, property taxes, and entity fees live in `kirbancials/bills.py`. The VWH portfolio lives in `kirbancials/vwh.py`. Trending math lives in `kirbancials/vwh_trend.py`.
 
 ## Deploy on Render
 
@@ -321,6 +399,9 @@ Do not commit them. On the service **Environment** page:
 - **Income.** Set `FINANCE_INCOME_CSV` to the raw CSV (`Transaction ID`, `Date`, `Source`, `Description`, `Amount`). Plain text, not gzipped. Leave it unset to show income as `$0.00`.
 - **Loan schedule.** Set `FINANCE_LOAN_SCHEDULE_CSV` to the raw CSV. The header is `Loan ID,Lender,Loan Name,Collateral,Rate,Payment Number,Payment Date,Payment,Interest,Principal,Remaining Balance`. Plain text, not gzipped. Leave it unset to leave scheduled loans out.
 - **Assets.** Set `FINANCE_ASSETS_CSV` to the raw CSV. The header is `Asset ID,Asset Name,Category,Acquired Date,Cost Basis,Market Value,Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes`. Plain text, not gzipped. Leave it unset to show cash and liabilities only.
+- **Bills.** Set `FINANCE_BILLS_CSV` to the raw CSV. The header is `Description,Type,Current Balance,Statement Balance,Amount Paid,Amount Still Due,Interest Rate,Statement Ending Date,Due Date,Paid Date,Notes`. Optional column: `Account Match`. Plain text, not gzipped. Leave it unset and the Bills tab says no bills are configured.
+- **Property taxes.** Set `FINANCE_PROP_TAXES_CSV` to the raw CSV. The header is `Property,Total Amount Due,1st Half,Amount Paid,Remaining Due,Notes`. Plain text, not gzipped. Leave it unset and that tab says no property taxes are configured.
+- **Entity fees.** Set `FINANCE_ENTITY_FEES_CSV` to the raw CSV. The header is `LLC,State,Tax File Number,Registered Agent,Status,Reg Agent Fee,Reg Agent Due Date,Franchise Tax,Franchise Tax Due Date,Paid From,Notes`. Plain text, not gzipped. Leave it unset and that tab says no entity fees are configured.
 - **VWH P&L.** Set `FINANCE_VWH_PL_CSV` to the raw CSV. The header is `Month,Property ID,Address,Section,Account Number,Account Name,Amount,Source`. Plain text, not gzipped. Leave it unset and the page says `No VWH P&L data yet`.
 - **VWH property tax.** Set `FINANCE_VWH_TAX_CSV` to the raw CSV. The header is `Pay Year,Property ID,Address,Parcel,Spring Tax,Fall Tax,Annual Tax,Spring Status,Fall Status`. Plain text, not gzipped. Leave it unset and Trending still shows the run rate, and says property tax data isn't loaded yet.
 
