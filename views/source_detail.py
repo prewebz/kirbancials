@@ -1,8 +1,7 @@
 """One expense source."""
 
-import streamlit as st
-
+from kirbancials.page_title import render_page_title
 from kirbancials.pnl import render_source_detail
 
-st.title("Source detail")
+render_page_title("Source detail")
 render_source_detail()

@@ -1,8 +1,7 @@
 """Monthly statement view."""
 
-import streamlit as st
-
 from kirbancials.dashboard import render_statements_page
+from kirbancials.page_title import render_page_title
 
-st.title("Monthly statements")
+render_page_title("Monthly statements")
 render_statements_page()

@@ -457,7 +457,7 @@ class NavigationTests(unittest.TestCase):
         self.assertIn('label="Bills"', links[2])
         self.assertLess(text.index("require_login()"), text.index("navigation.run()"))
         view = (ROOT / "views" / "bills.py").read_text()
-        self.assertIn('st.title("Bills")', view)
+        self.assertIn('render_page_title("Bills")', view)
         self.assertIn("render_bills", view)
         self.assertNotIn("require_login", view)
         self.assertNotIn("APP_PASSWORD", view)

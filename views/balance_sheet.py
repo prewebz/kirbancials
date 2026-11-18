@@ -1,8 +1,7 @@
 """Balance sheet page."""
 
-import streamlit as st
-
 from kirbancials.balance_sheet import render_balance_sheet
+from kirbancials.page_title import render_page_title
 
-st.title("Balance Sheet")
+render_page_title("Balance Sheet")
 render_balance_sheet()
