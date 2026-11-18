@@ -129,11 +129,14 @@ def show_money_table(
     percent_columns: Sequence[str] = (),
     *,
     percent_format: str = "%.2f%%",
+    row_styles: Sequence[str] | None = None,
 ) -> None:
     """Show a table whose money, percent, and date columns stay sortable values.
 
     Money and percent columns are coerced to float. Datetime columns stay
     datetimes. Streamlit formats them for display and sorts on the values.
+    `row_styles`, when the same length as the frame, is one CSS style per row.
+    An empty string leaves that row unstyled. Other callers omit it.
     """
     import streamlit as st
 
@@ -142,11 +145,21 @@ def show_money_table(
     percents = [column for column in percent_columns if column in display.columns]
     for column in [*money, *percents]:
         display[column] = pd.to_numeric(display[column], errors="coerce")
+    data: object = display
+    if row_styles is not None and len(row_styles) == len(display):
+        display = display.reset_index(drop=True)
+        styles = list(row_styles)
+
+        def paint(row: pd.Series) -> list[str]:
+            style = styles[int(row.name)] if int(row.name) < len(styles) else ""
+            return [style] * len(row)
+
+        data = display.style.apply(paint, axis=1)
     config = money_column_config(money)
     config.update(percent_column_config(percents, format=percent_format))
     config.update(_datetime_column_config(display))
     st.dataframe(
-        display,
+        data,
         width="stretch",
         hide_index=True,
         column_config=config,

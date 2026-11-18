@@ -534,5 +534,25 @@ class LoanInterestTests(unittest.TestCase):
         self.assertNotIn(account, set(spend["Account"]))
 
 
+class PageTitleTests(unittest.TestCase):
+    def test_profit_and_loss_title_is_compact_and_other_pages_keep_theirs(self) -> None:
+        view = (ROOT / "views" / "profit_and_loss.py").read_text()
+        self.assertIn('class="pnl-title"', view)
+        self.assertIn("Profit &amp; Loss", view)
+        self.assertNotIn("st.title(", view)
+        self.assertIn("padding-top: 3.9rem", view)
+        self.assertIn("@media (max-width: 768px)", view)
+        for name in (
+            "balance_sheet.py",
+            "bills.py",
+            "vwh_pl.py",
+            "daily.py",
+            "statements.py",
+            "source_detail.py",
+        ):
+            other = (ROOT / "views" / name).read_text()
+            self.assertIn("st.title(", other, name)
+
+
 if __name__ == "__main__":
     unittest.main()
