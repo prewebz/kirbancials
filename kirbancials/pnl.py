@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
 
 import altair as alt
@@ -341,11 +342,21 @@ def _income_expense_chart(frame: pd.DataFrame) -> alt.Chart | None:
     return chart.resolve_scale(y="shared").properties(height=280)
 
 
+def _ordered_by_amount(lines: Sequence[IncomeLine] | Sequence[ExpenseLine]) -> list:
+    """Highest dollar amount first. Equal amounts keep their current order.
+
+    Expense totals use the charge convention, where a larger number is a
+    larger expense. The same descending order therefore lists the largest
+    expense first. Totals and subtotals are not part of these line lists.
+    """
+    return sorted(lines, key=lambda line: line.total, reverse=True)
+
+
 def _income_rows(lines: list[IncomeLine], period: Period, income: float) -> None:
     header = st.columns([3, 2])
     header[0].markdown("**Income description**")
     header[1].markdown("**Total received**")
-    for line in lines:
+    for line in _ordered_by_amount(lines):
         row = st.columns([3, 2])
         row[0].write(line.label)
         row[1].page_link(
@@ -397,7 +408,7 @@ def _expense_rows(lines: list[ExpenseLine], period: Period) -> None:
     header[0].markdown("**Expense description**")
     header[1].markdown("**Total spend**")
     header[2].markdown("**Data through**")
-    for line in lines:
+    for line in _ordered_by_amount(lines):
         row = st.columns([3, 2, 2])
         label = loan_label_for(line)
         row[0].page_link(
