@@ -599,5 +599,171 @@ st.subheader("Income")
         self.assertIn('key="refresh_sidebar"', sidebar)
 
 
+def _expense_line(source_id: str, name: str, total: float, data_type: str = "transactions"):
+    from kirbancials.spend import ExpenseLine
+
+    return ExpenseLine(
+        source_id=source_id,
+        name=name,
+        data_type=data_type,
+        total=total,
+        data_through=None,
+        pending_charges=0,
+        interest=0.0,
+        fees=0.0,
+        latest_closing=None,
+    )
+
+
+class PnlLineOrderTests(unittest.TestCase):
+    """Fake amounts only. $1,500 must rank above $900 even though the text does not."""
+
+    def test_amount_order_is_numeric_and_ties_keep_their_place(self) -> None:
+        from kirbancials.formatting import format_money
+        from kirbancials.income import IncomeLine
+        from kirbancials.pnl import _ordered_by_amount
+
+        lines = [
+            IncomeLine("small", "Sample small", "Monthly", 900),
+            IncomeLine("big", "Sample big", "Monthly", 1500),
+            IncomeLine("tie_first", "Sample tie first", "Quarterly", 900),
+            IncomeLine("mid", "Sample mid", "Irregular", 400),
+            IncomeLine("credit", "Sample credit", "", -80),
+        ]
+        self.assertEqual(
+            [line.source_id for line in _ordered_by_amount(lines)],
+            ["big", "small", "tie_first", "mid", "credit"],
+        )
+        as_text = [format_money(line.total) for line in lines if line.total > 0]
+        self.assertEqual(sorted(as_text, reverse=True)[0], "$900.00")
+        self.assertNotEqual(sorted(as_text, reverse=True)[0], "$1,500.00")
+
+    def test_expenses_use_the_charge_convention(self) -> None:
+        from kirbancials.pnl import _ordered_by_amount
+
+        lines = [
+            _expense_line("refund", "Sample net credit", -250),
+            _expense_line("small", "Sample small card", 25),
+            _expense_line("big", "Sample big card", 900),
+            _expense_line("same", "Sample same card", 25),
+        ]
+        self.assertEqual(
+            [line.source_id for line in _ordered_by_amount(lines)],
+            ["big", "small", "same", "refund"],
+        )
+
+    def test_page_lists_each_group_highest_first_and_keeps_totals_last(self) -> None:
+        import inspect
+
+        from kirbancials.formatting import format_money
+        from kirbancials.pnl import render_profit_and_loss
+
+        # The harness lives next to app.py so the source-detail page link resolves.
+        # It is deleted before the test returns. Amounts are fake.
+        harness = ROOT / "_pnl_order_harness.py"
+        harness.write_text(
+            """
+import streamlit as st
+from datetime import date
+
+from kirbancials.income import IncomeLine
+from kirbancials.periods import resolve_period
+from kirbancials.pnl import _expense_rows, _income_rows
+from kirbancials.spend import ExpenseLine
+
+st.navigation(
+    [
+        st.Page("views/profit_and_loss.py", title="Profit & Loss", default=True),
+        st.Page("views/source_detail.py", title="Source detail", url_path="source"),
+    ]
+)
+period = resolve_period("this-month", date(2026, 11, 12))
+_income_rows(
+    [
+        IncomeLine("small", "Sample small", "Monthly", 200),
+        IncomeLine("big", "Sample big", "Monthly", 1500),
+        IncomeLine("tie", "Sample tie", "Quarterly", 200),
+    ],
+    period,
+    1900,
+)
+_expense_rows(
+    [
+        ExpenseLine("card_small", "Sample card small", "transactions", 40, None, 0, 0, 0, None),
+        ExpenseLine("card_big", "Sample card big", "transactions", 800, None, 0, 0, 0, None),
+    ],
+    period,
+)
+_expense_rows(
+    [
+        ExpenseLine("loan_small", "Sample loan small", "loan", 10, None, 0, 0, 0, None),
+        ExpenseLine("loan_big", "Sample loan big", "loan", 5000, None, 0, 0, 0, None),
+    ],
+    period,
+)
+"""
+        )
+        try:
+            app = AppTest.from_file(harness, default_timeout=30).run()
+        finally:
+            harness.unlink(missing_ok=True)
+        self.assertEqual(list(app.exception), [])
+        links = [link.value for link in app.page_link]
+        self.assertEqual(
+            links,
+            [
+                format_money(1500),
+                format_money(200),
+                format_money(200),
+                "Sample card big",
+                "Sample card small",
+                "Sample loan big",
+                "Sample loan small",
+            ],
+        )
+        rendered = [node.value for node in app.markdown]
+        income_labels = ["Sample big (Monthly)", "Sample small (Monthly)", "Sample tie (Quarterly)"]
+        label_at = [rendered.index(label) for label in income_labels]
+        total_at = rendered.index("**Total income**")
+        self.assertEqual(label_at, sorted(label_at))
+        self.assertLess(label_at[-1], total_at)
+        self.assertEqual(rendered[total_at : total_at + 2], ["**Total income**", f"**{format_money(1900)}**"])
+        self.assertLess(total_at, rendered.index("$800.00"))
+        self.assertLess(rendered.index("$800.00"), rendered.index("$40.00"))
+        self.assertLess(rendered.index("$5,000.00"), rendered.index("$10.00"))
+        self.assertLess(links.index("Sample card small"), links.index("Sample loan big"))
+        page = inspect.getsource(render_profit_and_loss)
+        self.assertLess(page.index("_expense_rows(schedule_lines, period)"), page.index("**Total expenses**"))
+
+
+class PriorMonthLabelTests(unittest.TestCase):
+    def test_header_shows_a_gray_last_month_line_and_hides_it_without_data(self) -> None:
+        from kirbancials.formatting import format_money
+        from streamlit.proto.Metric_pb2 import Metric as MetricProto
+
+        script = """
+from datetime import date
+
+from kirbancials.periods import resolve_period
+from kirbancials.pnl import _render_summary
+
+period = resolve_period("this-month", date(2026, 11, 12))
+_render_summary(1000, 180, 820, period, date(2026, 10, 1), 100)
+_render_summary(0, 50, -50, period, None, None)
+"""
+        app = AppTest.from_string(script, default_timeout=30).run()
+        self.assertEqual(list(app.exception), [])
+        shown = app.metric[1]
+        hidden = app.metric[5]
+        self.assertEqual(shown.label, "Total expenses")
+        self.assertEqual(shown.value, format_money(180))
+        self.assertEqual(shown.delta, f"Last month: {format_money(100)}")
+        self.assertEqual(shown.color, MetricProto.MetricColor.GRAY)
+        self.assertEqual(shown.direction, MetricProto.MetricDirection.NONE)
+        self.assertEqual(hidden.label, "Total expenses")
+        self.assertEqual(hidden.value, format_money(50))
+        self.assertEqual(hidden.delta, "")
+
+
 if __name__ == "__main__":
     unittest.main()

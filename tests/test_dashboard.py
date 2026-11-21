@@ -20,9 +20,10 @@ from kirbancials.overview import (
     expense_data_start,
     income_expense_by_month,
     monthly_run_rate,
+    prior_month_expenses,
     recent_month_periods,
 )
-from kirbancials.periods import PERIOD_KEYS, PERIOD_LABELS, Period, resolve_period
+from kirbancials.periods import PERIOD_KEYS, PERIOD_LABELS, Period, prior_calendar_month, resolve_period
 from kirbancials.sources import IncomeSource
 from kirbancials.spend import expense_lines
 
@@ -347,6 +348,117 @@ jun,2026-06-03,chipotle_nnn,June sample,50
         november = by_month["Nov 2026"]
         self.assertEqual(november.expenses, 0)
         self.assertEqual(november.income, 0)
+
+
+class PriorMonthExpenseTests(unittest.TestCase):
+    """Fake charges. The comparison uses the same expense total as the page."""
+
+    def test_prior_month_follows_the_selected_period(self) -> None:
+        self.assertEqual(
+            (prior_calendar_month(resolve_period("this-month", TODAY)).start,
+             prior_calendar_month(resolve_period("this-month", TODAY)).end),
+            (date(2026, 10, 1), date(2026, 10, 31)),
+        )
+        last = prior_calendar_month(resolve_period("last-month", TODAY))
+        self.assertEqual((last.start, last.end), (date(2026, 9, 1), date(2026, 9, 30)))
+        quarter = prior_calendar_month(resolve_period("qtd", TODAY))
+        self.assertEqual((quarter.start, quarter.end), (date(2026, 9, 1), date(2026, 9, 30)))
+        year = prior_calendar_month(resolve_period("ytd", TODAY))
+        self.assertEqual((year.start, year.end), (date(2025, 12, 1), date(2025, 12, 31)))
+        trailing = prior_calendar_month(resolve_period("last-12-months", TODAY))
+        self.assertEqual((trailing.start, trailing.end), (date(2025, 10, 1), date(2025, 10, 31)))
+        leap = prior_calendar_month(Period("custom", "March", date(2024, 3, 15), date(2024, 3, 15)))
+        self.assertEqual((leap.start, leap.end), (date(2024, 2, 1), date(2024, 2, 29)))
+        self.assertIsNone(prior_calendar_month(resolve_period("all-time", TODAY)))
+
+    def test_same_total_as_the_page_and_hidden_without_data(self) -> None:
+        transactions = pd.DataFrame(
+            [
+                {
+                    "Account": "Citi AAdvantage card ending 7690",
+                    "Date": date(2026, 11, 2),
+                    "Amount": 80,
+                    "Pending": False,
+                    "Category": "Shopping",
+                    "Merchant": "Sample Store",
+                    "Description": "goods",
+                },
+                {
+                    "Account": "Citi AAdvantage card ending 7690",
+                    "Date": date(2026, 10, 4),
+                    "Amount": 100,
+                    "Pending": False,
+                    "Category": "Shopping",
+                    "Merchant": "Sample October",
+                    "Description": "goods",
+                },
+                {
+                    "Account": "Citi AAdvantage card ending 7690",
+                    "Date": date(2026, 10, 8),
+                    "Amount": -30,
+                    "Pending": False,
+                    "Category": "Payment",
+                    "Merchant": "PAYMENT THANK YOU",
+                    "Description": "card payment",
+                },
+            ]
+        )
+        monthly = pd.DataFrame(
+            [
+                {
+                    "Account": "Nordstrom card ending 5488",
+                    "Month": "2026-09",
+                    "Statement Closing Date": "2026-09-20",
+                    "Net Spend": 40,
+                    "Interest": 5,
+                    "Fees": 5,
+                }
+            ]
+        )
+        this_month = resolve_period("this-month", TODAY)
+        october = prior_calendar_month(this_month)
+        expected = sum(line.total for line in expense_lines(transactions, monthly, october))
+        self.assertEqual(expected, 100)
+        self.assertEqual(prior_month_expenses(transactions, monthly, this_month), expected)
+
+        # September is before the first transaction, but the statement is real data.
+        last_month = resolve_period("last-month", TODAY)
+        self.assertEqual(prior_month_expenses(transactions, monthly, last_month), 50)
+
+        no_statement = prior_month_expenses(transactions, pd.DataFrame(), last_month)
+        self.assertIsNone(no_statement)
+        self.assertIsNone(
+            prior_month_expenses(pd.DataFrame(), pd.DataFrame(), this_month)
+        )
+        self.assertIsNone(
+            prior_month_expenses(transactions, monthly, resolve_period("all-time", TODAY))
+        )
+
+    def test_a_covered_month_with_no_spend_stays_visible(self) -> None:
+        transactions = pd.DataFrame(
+            [
+                {
+                    "Account": "Citi AAdvantage card ending 7690",
+                    "Date": date(2026, 9, 2),
+                    "Amount": 15,
+                    "Pending": False,
+                    "Category": "Shopping",
+                    "Merchant": "Sample September",
+                    "Description": "goods",
+                },
+                {
+                    "Account": "Citi AAdvantage card ending 7690",
+                    "Date": date(2026, 11, 2),
+                    "Amount": 80,
+                    "Pending": False,
+                    "Category": "Shopping",
+                    "Merchant": "Sample Store",
+                    "Description": "goods",
+                },
+            ]
+        )
+        shown = prior_month_expenses(transactions, pd.DataFrame(), resolve_period("this-month", TODAY))
+        self.assertEqual(shown, 0)
 
 
 if __name__ == "__main__":

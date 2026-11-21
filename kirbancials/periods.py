@@ -82,6 +82,21 @@ def resolve_period(key: str, today: date) -> Period:
     return Period(key, label, start, today)
 
 
+def prior_calendar_month(period: Period) -> Period | None:
+    """Full calendar month before the selected period.
+
+    The anchor is the month that contains the period start, so a window that
+    starts mid-month still compares with the previous full month. An open
+    period such as all time has no comparison month.
+    """
+    if period.start is None:
+        return None
+    first = period.start.replace(day=1)
+    end = first - timedelta(days=1)
+    start = end.replace(day=1)
+    return Period(start.strftime("%Y-%m"), "Last month", start, end)
+
+
 def format_period(period: Period) -> str:
     if period.start is None and period.end is None:
         return "All time"
