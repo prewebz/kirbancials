@@ -23,8 +23,10 @@ from kirbancials.bills import (
     BILL_COLUMNS,
     BILL_EXPORT,
     BILL_HEADER,
+    BILL_LEGEND,
     BILL_SECTIONS,
     BILLS_ENV,
+    DUE_SOON_STYLE,
     ENTITY_FEE_COLUMNS,
     ENTITY_FEE_HEADER,
     ENTITY_FEES_ENV,
@@ -35,6 +37,7 @@ from kirbancials.bills import (
     NO_ENTITY_FEES,
     NO_PROPERTY_TAXES,
     NO_TYPE,
+    OVERDUE_STYLE,
     PROP_TAX_COLUMNS,
     PROP_TAX_EXPORT,
     PROP_TAX_HEADER,
@@ -707,10 +710,48 @@ class NavigationTests(unittest.TestCase):
         self.assertIn('label="Bills"', links[2])
         self.assertLess(text.index("require_login()"), text.index("navigation.run()"))
         view = (ROOT / "views" / "bills.py").read_text()
-        self.assertIn('render_page_title("Bills")', view)
+        self.assertIn('render_page_title("Bills", legend=BILL_LEGEND)', view)
         self.assertIn("render_bills", view)
         self.assertNotIn("require_login", view)
         self.assertNotIn("APP_PASSWORD", view)
+        self.assertNotIn("<style>", view)
+
+    def test_color_legend_is_the_title_line_and_only_real_colors(self) -> None:
+        self.assertEqual(
+            BILL_LEGEND,
+            (
+                (OVERDUE_STYLE, "Past due, still owed"),
+                (DUE_SOON_STYLE, "Due within 7 days"),
+            ),
+        )
+        source = (ROOT / "kirbancials" / "bills.py").read_text()
+        self.assertEqual(source.count("row_styles="), 1)
+        script = """
+from kirbancials.bills import BILL_LEGEND
+from kirbancials.page_title import render_page_title
+
+render_page_title("Bills", legend=BILL_LEGEND)
+"""
+        app = AppTest.from_string(script, default_timeout=30).run()
+        self.assertEqual(list(app.exception), [])
+        self.assertEqual(len(list(app.html)), 1)
+        body = app.html[0].value
+        self.assertIn('class="page-heading"', body)
+        self.assertIn('class="page-title">Bills</p>', body)
+        self.assertIn('class="page-legend"', body)
+        self.assertLess(body.index('class="page-title"'), body.index('class="page-legend"'))
+        self.assertIn("Past due, still owed", body)
+        self.assertIn("Due within 7 days", body)
+        self.assertIn(OVERDUE_STYLE, body)
+        self.assertIn(DUE_SOON_STYLE, body)
+        self.assertIn("flex-wrap: nowrap", body)
+        self.assertNotIn("Paid", body)
+        plain = AppTest.from_string(
+            'from kirbancials.page_title import render_page_title\nrender_page_title("Profit & Loss")\n',
+            default_timeout=30,
+        ).run()
+        self.assertNotIn("page-legend", plain.html[0].value)
+        self.assertNotIn("page-heading", plain.html[0].value)
 
 
 class MoneyTableTests(unittest.TestCase):

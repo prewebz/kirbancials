@@ -79,6 +79,11 @@ OVERDUE = "overdue"
 DUE_SOON = "due_soon"
 OVERDUE_STYLE = "background-color: rgba(198, 40, 40, 0.22)"
 DUE_SOON_STYLE = "background-color: rgba(230, 160, 0, 0.32)"
+# The only row colors on this page. Property taxes and entity fees are plain.
+BILL_LEGEND: tuple[tuple[str, str], ...] = (
+    (OVERDUE_STYLE, "Past due, still owed"),
+    (DUE_SOON_STYLE, "Due within 7 days"),
+)
 
 NO_BILLS = "No bills are configured. Set FINANCE_BILLS_CSV to load this tab."
 NO_BILLS_YET = "No bills yet."

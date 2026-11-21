@@ -211,7 +211,7 @@ The header row is exactly:
 
 Amounts are plain decimals, such as `1000.00` or `1000`. A leading `$`, thousands separators, and parentheses for a negative (`($12.00)`) are also accepted. Any other text makes the file unreadable.
 
-The page compares due dates with today's date, the same clock as the Balance Sheet `As of` line. A row is red when the due date is before today and Amount Still Due is greater than zero. A row is amber when the due date is today or at most 7 days later. A blank due date is neither. A paid row, with nothing still due, is neither.
+The page compares due dates with today's date, the same clock as the Balance Sheet `As of` line. A row is red when the due date is before today and Amount Still Due is greater than zero. A row is amber when the due date is today or at most 7 days later, whether or not it is paid. A blank due date is neither. A paid row whose due date is already past is uncolored. Those two colors are the only ones on the page. A one-line legend sits on the same row as the page title, to its right: a red swatch labeled `Past due, still owed` and an amber swatch labeled `Due within 7 days`. Property taxes and entity fees are not colored, so they do not add a legend.
 
 The Bills tab groups the filtered rows into five sections, in this order: Credit Cards, Lines of Credit, Car Payments, Property Taxes, and Other. Each section has a compact subheader. A section with no rows says `None yet` and has no table. A section with rows sorts by due date and has a subtotal of Current Balance, Statement Balance, Amount Paid, and Amount Still Due. The grand total under the sections adds the same columns for every row in the type filter. A blank amount counts as zero in those totals.
 

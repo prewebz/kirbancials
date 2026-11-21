@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from datetime import date
 from pathlib import Path
@@ -550,7 +551,11 @@ class PageTitleTests(unittest.TestCase):
     def test_every_page_uses_the_shared_compact_title(self) -> None:
         for name, title in PAGE_TITLES.items():
             view = (ROOT / "views" / name).read_text()
-            self.assertIn(f'render_page_title("{title}")', view, name)
+            self.assertRegex(
+                view,
+                rf'render_page_title\(\s*"{re.escape(title)}"(?:,\s*legend=\w+)?\s*\)',
+                name,
+            )
             self.assertNotIn("st.title(", view, name)
             self.assertNotIn("pnl-title", view, name)
             self.assertNotIn("<style>", view, name)
