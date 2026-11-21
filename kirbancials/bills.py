@@ -271,6 +271,8 @@ ENTITY_FEE_HEADER = ",".join(ENTITY_FEE_COLUMNS)
 BILL_MONEY = [name for name, kind in BILL_EXPORT if kind == "money"]
 PROP_TAX_MONEY = [name for name, kind in PROP_TAX_EXPORT if kind == "money"]
 ENTITY_FEE_MONEY = [name for name, kind in ENTITY_FEE_EXPORT if kind == "money"]
+# These values stay readable after the column header scrolls away.
+BILL_EMPHASIS = ("Amount Still Due", "Due Date")
 
 
 def resolve_bills(environ: Mapping[str, str] | None = None) -> TableLoad:
@@ -660,6 +662,7 @@ def _render_bill_sections(bills: Sequence[BillRecord], today: date) -> None:
             BILL_MONEY,
             ["Interest Rate"],
             row_styles=bill_row_styles(rows, today),
+            bold_columns=BILL_EMPHASIS,
         )
         _show_total(section_records, "Subtotal", SUBTOTAL_LABEL)
     _show_total(bill_records(bills), "Totals", TOTAL_LABEL)
@@ -671,6 +674,7 @@ def _show_total(records: Sequence[Mapping[str, object]], caption: str, label: st
         display_frame([totals_record(records, BILL_EXPORT, "Description", label)], BILL_EXPORT),
         BILL_MONEY,
         ["Interest Rate"],
+        bold_columns=BILL_EMPHASIS,
     )
 
 
