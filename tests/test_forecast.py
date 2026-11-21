@@ -247,21 +247,13 @@ class TotalExpenseForecastTests(unittest.TestCase):
             ]
         )
         forecast = month_end_forecast(transactions, as_of, monthly, balances)
-        month_start = date(2026, 11, 1)
-        mtd = sum(
-            line.total
-            for line in expense_lines(
-                transactions,
-                monthly,
-                Period("mtd", "Month to date", month_start, as_of),
-                balances,
-            )
+        self.assertGreaterEqual(forecast.total, forecast.month_to_date)
+        self.assertEqual(forecast.other_expenses, 80)
+        self.assertNotAlmostEqual(
+            forecast.other_expenses,
+            estimated_interest(10000, 7.49, 30) + 80,
         )
-        self.assertGreater(mtd, 100)
-        self.assertGreaterEqual(forecast.total, mtd)
-        self.assertAlmostEqual(forecast.other_expenses, estimated_interest(10000, 7.49, 30) + 80)
-        self.assertEqual(forecast.month_to_date, mtd)
-        self.assertGreater(forecast.other_expenses, 80)
+        self.assertEqual(forecast.month_to_date, 100)
 
     def test_a_negative_pace_does_not_pull_the_forecast_below_month_to_date(self) -> None:
         from kirbancials.periods import Period
@@ -325,6 +317,70 @@ class TotalExpenseForecastTests(unittest.TestCase):
         self.assertEqual(forecast.last_month_actual, 60)
 
 
+class DiscretionaryScopeTests(unittest.TestCase):
+    def test_financing_transfers_and_loan_payments_stay_out(self) -> None:
+        from kirbancials.discretionary import (
+            DISCRETIONARY_EXCLUDED_DATA_TYPES,
+            DISCRETIONARY_EXCLUDED_SOURCE_IDS,
+            discretionary_total,
+            is_financing_expense,
+        )
+        from kirbancials.periods import Period
+        from kirbancials.spend import ExpenseLine
+
+        self.assertIn("wf_auto_7635", DISCRETIONARY_EXCLUDED_SOURCE_IDS)
+        self.assertIn("wf_auto_8492", DISCRETIONARY_EXCLUDED_SOURCE_IDS)
+        self.assertIn("truist_auto_1001", DISCRETIONARY_EXCLUDED_SOURCE_IDS)
+        self.assertIn("jeep_0001", DISCRETIONARY_EXCLUDED_SOURCE_IDS)
+        self.assertIn("ks_statebank_805_loc_1279", DISCRETIONARY_EXCLUDED_SOURCE_IDS)
+        self.assertIn("morpho_loan", DISCRETIONARY_EXCLUDED_SOURCE_IDS)
+        self.assertIn("schedule", DISCRETIONARY_EXCLUDED_DATA_TYPES)
+        ffb = ExpenseLine("schedule:chipotle", "First Fidelity Bank - Chipotle", "schedule", 90, None, 0, 90, 0, None)
+        self.assertTrue(is_financing_expense(ffb))
+        rows = [
+            _row(date(2026, 11, 3), 500, "Sample Lender", category="Loan Payments", transaction_id="loan"),
+            _row(date(2026, 11, 4), -20, "Sample Transfer", category="Transfer Out", transaction_id="xfer"),
+            _row(date(2026, 11, 5), 15, "Sample Air", category="Travel", transaction_id="trip"),
+        ]
+        period = Period("mtd", "Month to date", date(2026, 11, 1), date(2026, 11, 10))
+        self.assertEqual(discretionary_total(_frame(rows), pd.DataFrame(), period), 15)
+
+    def test_travel_is_flagged_when_it_jumps_above_the_three_month_average(self) -> None:
+        rows = []
+        for month in (8, 9, 10):
+            rows.append(
+                _row(
+                    date(2026, month, 10),
+                    30,
+                    "Sample Market",
+                    category="Groceries",
+                    transaction_id=f"g-{month}",
+                )
+            )
+            rows.append(
+                _row(
+                    date(2026, month, 10),
+                    10,
+                    "Sample Air",
+                    category="Travel",
+                    transaction_id=f"t-{month}",
+                )
+            )
+        rows.append(_row(date(2026, 11, 4), 30, "Sample Market", category="Groceries", transaction_id="g-11"))
+        rows.append(_row(date(2026, 11, 4), 100, "Sample Air", category="Travel", transaction_id="t-11"))
+        forecast = month_end_forecast(_frame(rows), date(2026, 11, 10))
+        by_name = {item.category: item for item in forecast.categories}
+        travel = by_name["Travel"]
+        groceries = by_name["Groceries"]
+        self.assertEqual(travel.trailing_average, 10)
+        self.assertGreaterEqual(travel.forecast, travel.month_to_date)
+        self.assertTrue(travel.trending)
+        self.assertEqual(forecast.categories[0].category, "Travel")
+        self.assertGreater(travel.increase, groceries.increase)
+        self.assertEqual(travel.transactions[0].merchant, "Sample Air")
+        self.assertGreaterEqual(forecast.total, forecast.month_to_date)
+
+
 class ForecastDisplayTests(unittest.TestCase):
     def test_header_shows_the_forecast_breakdown_and_gray_last_month(self) -> None:
         script = """
@@ -364,8 +420,9 @@ _render_summary(0, 180, -180, period, date(2026, 10, 1), 100, forecast)
         self.assertIn(format_money(200), breakdown)
         self.assertIn(format_money(50), breakdown)
         self.assertIn(f"{format_money(5)}/day", breakdown)
-        self.assertIn("Interest and statements", breakdown)
-        self.assertTrue(any(text.startswith("Forecast of total expenses") for text in captions))
+        self.assertIn("Statement cards", breakdown)
+        self.assertTrue(any(text.startswith("Forecast of discretionary spending") for text in captions))
+        self.assertIn("Excludes loans and LOC interest (see Bills)", captions)
         rendered = "\n".join(node.value for node in app.markdown)
         self.assertIn("Sample Appliance", rendered)
         self.assertIn("Sample Power", rendered)

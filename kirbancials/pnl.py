@@ -11,6 +11,12 @@ import streamlit as st
 
 from kirbancials.activity import load_balances, load_transactions, resolve_balances, resolve_transactions
 from kirbancials.data import FinanceDataError, load_dataset, resolve_origin
+from kirbancials.discretionary import (
+    FINANCING_NOTE,
+    discretionary_history_frame,
+    discretionary_line_amount,
+    discretionary_previous_month,
+)
 from kirbancials.forecast import ExpenseForecast, month_end_forecast
 from kirbancials.formatting import format_money, format_signed_money, show_money_table
 from kirbancials.income import (
@@ -30,8 +36,6 @@ from kirbancials.overview import (
     expected_income_next_month,
     expense_coverage_note,
     expense_data_start,
-    income_expense_by_month,
-    prior_month_expenses,
     recent_month_periods,
 )
 from kirbancials.periods import PERIOD_KEYS, PERIOD_LABELS, Period, format_period, period_choice, resolve_period
@@ -69,10 +73,11 @@ def render_profit_and_loss() -> None:
     received = income_lines(deposits, period)
     income = total_income(deposits, period)
     lines = expense_lines(transactions, monthly, period, balances, schedule)
-    expenses = sum(line.total for line in lines)
+    shown = _discretionary_rows(lines, transactions, period)
+    expenses = sum(amount for _line, amount in shown)
     net = net_profit(income, expenses)
     available_from = expense_data_start(transactions)
-    prior_expenses = prior_month_expenses(transactions, monthly, period, balances, schedule)
+    prior_expenses = discretionary_previous_month(transactions, monthly, period, balances, schedule)
     forecast = month_end_forecast(transactions, period.end or today, monthly, balances, schedule)
 
     _render_summary(income, expenses, net, period, available_from, prior_expenses, forecast)
@@ -86,24 +91,14 @@ def render_profit_and_loss() -> None:
     _income_rows(received, period, income)
 
     st.subheader("Expenses")
-    card_lines = [line for line in lines if line.data_type not in {"loan", "schedule"}]
-    loan_lines = [line for line in lines if line.data_type == "loan"]
-    schedule_lines = [line for line in lines if line.data_type == "schedule"]
-    _expense_rows(card_lines, period)
-    if loan_lines:
-        st.markdown("**Loan interest**")
-        st.caption("Interest estimated from current balance and APR.")
-        _expense_rows(loan_lines, period)
-    if schedule_lines:
-        if not loan_lines:
-            st.markdown("**Loan interest**")
-        st.caption("Scheduled interest. Principal is not an expense.")
-        _expense_rows(schedule_lines, period)
+    st.caption(FINANCING_NOTE)
+    _expense_rows(shown, period)
+    _category_trends(forecast)
     total = st.columns([3, 2, 2])
     total[0].markdown("**Total expenses**")
     total[1].markdown(f"**{format_money(expenses)}**")
     total[2].write("")
-    for note in caveats(lines):
+    for note in caveats([line for line, _amount in shown]):
         st.caption(note)
 
     net = net_profit(income, expenses)
@@ -234,15 +229,16 @@ def _render_summary(
             f"One-time so far {format_money(forecast.one_time)}",
             f"Bills still to come {format_money(forecast.bills_still_to_come)}",
             f"Everyday pace {format_money(max(forecast.everyday_pace, 0.0))}/day",
-            f"Interest and statements {format_money(forecast.other_expenses)}",
+            f"Statement cards {format_money(forecast.other_expenses)}",
         ]
         if forecast.other_card_spend:
             pieces.append(f"Other card charges {format_money(forecast.other_card_spend)}")
         st.caption(" · ".join(pieces))
         st.caption(
-            "Forecast of total expenses. Card charges are paced. "
-            "Interest, scheduled loans, and statement cards are the full month."
+            "Forecast of discretionary spending. Card charges are paced. "
+            "Statement cards count for the full month."
         )
+        st.caption(FINANCING_NOTE)
         _forecast_expander(forecast)
 
 
@@ -264,7 +260,7 @@ def _forecast_expander(forecast: ExpenseForecast) -> None:
         st.caption(
             "One-time charges and recurring bills are counted once. "
             "They are not spread over the rest of the month. "
-            "Interest and statement cards are included in the forecast total, not in this list."
+            "Statement cards are included in the forecast total, not in this list."
         )
         _flag_block("One-time", forecast.one_time_charges)
         _flag_block("Recurring", forecast.recurring_charges)
@@ -323,19 +319,12 @@ def _render_trend(
     schedule: pd.DataFrame | None = None,
 ) -> None:
     st.subheader("Income and expenses")
-    st.caption("Last 6 months. The current month runs through today. Net is the line.")
+    st.caption("Last 6 months of discretionary spending. The current month runs through today. Net is the line.")
     months = recent_month_periods(today)
     note = expense_coverage_note(months[0].start if months else None, available_from)
     if note:
         st.caption(note)
-    frame = income_expense_by_month(
-        transactions,
-        monthly,
-        deposits,
-        balances,
-        today,
-        schedule=schedule,
-    )
+    frame = discretionary_history_frame(transactions, monthly, deposits, today)
     chart = _income_expense_chart(frame)
     if chart is None:
         st.info("No income or expenses in the last 6 months.")
@@ -452,14 +441,59 @@ def _render_income_detail(source_id: str, deposits: pd.DataFrame, period: Period
     show_money_table(income_table(rows), ["Amount"])
 
 
-def _expense_rows(lines: list[ExpenseLine], period: Period) -> None:
-    if not lines:
+def _discretionary_rows(
+    lines: list[ExpenseLine],
+    transactions: pd.DataFrame,
+    period: Period,
+) -> list[tuple[ExpenseLine, float]]:
+    rows: list[tuple[ExpenseLine, float]] = []
+    for line in lines:
+        amount = discretionary_line_amount(line, transactions, period)
+        if amount is None:
+            continue
+        rows.append((line, amount))
+    return rows
+
+
+def _category_trends(forecast: ExpenseForecast | None) -> None:
+    st.markdown("**Categories**")
+    st.caption(
+        "This month, the forecast, last month, and the prior 3-month average. "
+        "Up means the forecast is at least 20% above that average."
+    )
+    if forecast is None or not forecast.categories:
+        st.caption("No discretionary spending in this month.")
+        return
+    for trend in forecast.categories:
+        marker = " · Up" if trend.trending else ""
+        label = (
+            f"{trend.category}{marker}"
+            f" · {format_money(trend.month_to_date)} now"
+            f" · {format_money(trend.forecast)} forecast"
+        )
+        with st.expander(label):
+            st.caption(
+                f"Last month {format_money(trend.last_month)}"
+                f" · 3-month average {format_money(trend.trailing_average)}"
+            )
+            if not trend.transactions:
+                st.caption("No card transactions in this category this month.")
+                continue
+            for charge in trend.transactions:
+                st.write(
+                    f"{charge.when.isoformat()} · {charge.merchant} · {format_money(charge.amount)}"
+                )
+
+
+def _expense_rows(rows: list[tuple[ExpenseLine, float]], period: Period) -> None:
+    if not rows:
         return
     header = st.columns([3, 2, 2])
     header[0].markdown("**Expense description**")
     header[1].markdown("**Total spend**")
     header[2].markdown("**Data through**")
-    for line in _ordered_by_amount(lines):
+    ordered = sorted(rows, key=lambda item: item[1], reverse=True)
+    for line, amount in ordered:
         row = st.columns([3, 2, 2])
         label = loan_label_for(line)
         row[0].page_link(
@@ -467,7 +501,7 @@ def _expense_rows(lines: list[ExpenseLine], period: Period) -> None:
             label=label,
             query_params={"source": line.source_id, "period": period.key},
         )
-        row[1].write(format_money(line.total))
+        row[1].write(format_money(amount))
         row[2].write(line.data_through.isoformat() if line.data_through else "—")
 
 
