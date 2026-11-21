@@ -15,6 +15,11 @@ Bills may include an optional Account Match column. When that text matches
 a credit-card or loan account in the balance file, Current Balance on the
 page is that account's latest balance. Checking and savings accounts are
 left alone. A match that is missing keeps the amount typed in the CSV.
+
+Bills may also include an optional Section column. The Bills tab groups
+rows into Credit Cards, Lines of Credit, Car Payments, Property Taxes, and
+Other. A missing column, a blank cell, or an unrecognized value is inferred
+from the description. The column is not shown.
 """
 
 from __future__ import annotations
@@ -49,9 +54,24 @@ PROP_TAXES_ENV = "FINANCE_PROP_TAXES_CSV"
 ENTITY_FEES_ENV = "FINANCE_ENTITY_FEES_CSV"
 
 ACCOUNT_MATCH = "Account Match"
+SECTION_COLUMN = "Section"
+SECTION_CREDIT = "Credit Cards"
+SECTION_LOC = "Lines of Credit"
+SECTION_CAR = "Car Payments"
+SECTION_TAX = "Property Taxes"
+SECTION_OTHER = "Other"
+BILL_SECTIONS = (
+    SECTION_CREDIT,
+    SECTION_LOC,
+    SECTION_CAR,
+    SECTION_TAX,
+    SECTION_OTHER,
+)
 ALL_TYPES = "All"
 NO_TYPE = "(No type)"
 TOTAL_LABEL = "Total"
+SUBTOTAL_LABEL = "Subtotal"
+NONE_YET = "None yet"
 DUE_SOON_DAYS = 7
 TYPE_KEY = "bills_type_filter"
 
@@ -59,6 +79,11 @@ OVERDUE = "overdue"
 DUE_SOON = "due_soon"
 OVERDUE_STYLE = "background-color: rgba(198, 40, 40, 0.22)"
 DUE_SOON_STYLE = "background-color: rgba(230, 160, 0, 0.32)"
+# The only row colors on this page. Property taxes and entity fees are plain.
+BILL_LEGEND: tuple[tuple[str, str], ...] = (
+    (OVERDUE_STYLE, "Past due, still owed"),
+    (DUE_SOON_STYLE, "Due within 7 days"),
+)
 
 NO_BILLS = "No bills are configured. Set FINANCE_BILLS_CSV to load this tab."
 NO_BILLS_YET = "No bills yet."
@@ -94,6 +119,25 @@ _DECIMAL = re.compile(r"-?\d+(?:\.\d+)?")
 _ISO_DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 _US_DATE = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})")
 _ZERO_TIME = (" 00:00:00", "T00:00:00", "T00:00:00Z")
+
+# Loan, line-of-credit, and property-tax phrases are checked before card
+# names, so "BOA Auto Loan" stays a car payment.
+_OBLIGATION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bproperty tax(?:es)?\b", re.IGNORECASE), SECTION_TAX),
+    (re.compile(r"\bline of credit\b|\bloc\b", re.IGNORECASE), SECTION_LOC),
+    (re.compile(r"\b(?:auto|jeep) loans?\b", re.IGNORECASE), SECTION_CAR),
+)
+_CARD_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bamex\b", re.IGNORECASE),
+    re.compile(r"\bciti(?:bank)?\b", re.IGNORECASE),
+    re.compile(r"\bboa\b", re.IGNORECASE),
+    re.compile(r"\bbank of america\b", re.IGNORECASE),
+    re.compile(r"\bcapital one\b", re.IGNORECASE),
+    re.compile(r"\bnordstrom\b", re.IGNORECASE),
+    re.compile(r"\bneiman\b", re.IGNORECASE),
+    re.compile(r"\bbonvoy\b", re.IGNORECASE),
+)
+_SECTION_KEYS = {name.casefold(): name for name in BILL_SECTIONS}
 
 _HEADER_FONT = Font(bold=True)
 _TOTAL_FONT = Font(bold=True)
@@ -153,6 +197,7 @@ class BillRecord:
     paid_date: date | None
     notes: str
     account_match: str = ""
+    section: str = ""
     balance_from_account: bool = False
 
 
@@ -280,6 +325,48 @@ def sort_bills(bills: Sequence[BillRecord]) -> tuple[BillRecord, ...]:
     )
 
 
+def canonical_section(value: str) -> str | None:
+    """A section name, or None when the text is blank or not one of the five."""
+    key = " ".join(value.split()).casefold()
+    if not key:
+        return None
+    return _SECTION_KEYS.get(key)
+
+
+def infer_section(description: str) -> str:
+    """Section from the description when Section is missing or not recognized.
+
+    Property tax, line of credit, and auto or Jeep loan phrases win over a
+    card name in the same text. Anything else is Other.
+    """
+    for pattern, section in _OBLIGATION_PATTERNS:
+        if pattern.search(description):
+            return section
+    for pattern in _CARD_PATTERNS:
+        if pattern.search(description):
+            return SECTION_CREDIT
+    return SECTION_OTHER
+
+
+def bill_section(bill: BillRecord) -> str:
+    """Section column when it names a section. Otherwise infer from Description."""
+    named = canonical_section(bill.section)
+    if named is not None:
+        return named
+    return infer_section(bill.description)
+
+
+def section_groups(bills: Sequence[BillRecord]) -> tuple[tuple[str, tuple[BillRecord, ...]], ...]:
+    """The five sections, in display order. Each group is sorted by due date.
+
+    A section with no rows is an empty tuple. The page still shows that heading.
+    """
+    buckets: dict[str, list[BillRecord]] = {name: [] for name in BILL_SECTIONS}
+    for bill in bills:
+        buckets[bill_section(bill)].append(bill)
+    return tuple((name, sort_bills(rows)) for name, rows in buckets.items())
+
+
 def type_options(bills: Sequence[BillRecord]) -> list[str]:
     """All, then each non-blank type, then a choice for rows with no type."""
     named = sorted({bill.bill_type for bill in bills if bill.bill_type}, key=str.casefold)
@@ -329,7 +416,7 @@ def bill_row_styles(bills: Sequence[BillRecord], today: date) -> list[str]:
 
 
 def bill_records(bills: Sequence[BillRecord]) -> list[dict[str, object]]:
-    """Display columns only. Account Match stays off the table."""
+    """Display columns only. Account Match and Section stay off the table."""
     return [
         {
             "Description": bill.description,
@@ -397,12 +484,13 @@ def totals_record(
     records: Sequence[Mapping[str, object]],
     columns: Sequence[tuple[str, str]],
     label_column: str,
+    label: str = TOTAL_LABEL,
 ) -> dict[str, object]:
     """One totals row. Money columns are summed. Other cells stay blank."""
     total: dict[str, object] = {}
     for name, kind in columns:
         if name == label_column:
-            total[name] = TOTAL_LABEL
+            total[name] = label
         elif kind == "money":
             total[name] = sum_amounts([record.get(name) for record in records])
         elif kind == "text":
@@ -552,18 +640,38 @@ def _render_bills_tab(
     if not shown:
         st.info(NO_BILLS_FOR_TYPE)
     else:
-        show_money_table(
-            display_frame(records, BILL_EXPORT),
-            BILL_MONEY,
-            ["Interest Rate"],
-            row_styles=bill_row_styles(shown, today),
-        )
-        st.caption("Totals")
-        show_money_table(display_frame([totals_record(records, BILL_EXPORT, "Description")], BILL_EXPORT), BILL_MONEY, ["Interest Rate"])
+        _render_bill_sections(shown, today)
         st.caption(FLAG_NOTE)
         if any(bill.balance_from_account for bill in shown):
             st.caption(ACCOUNT_MATCH_NOTE)
     _download_csv("bills.csv", table_csv(records, BILL_EXPORT), "bills_csv")
+
+
+def _render_bill_sections(bills: Sequence[BillRecord], today: date) -> None:
+    """One compact heading per section, then the grand total."""
+    for name, rows in section_groups(bills):
+        st.subheader(name)
+        if not rows:
+            st.caption(NONE_YET)
+            continue
+        section_records = bill_records(rows)
+        show_money_table(
+            display_frame(section_records, BILL_EXPORT),
+            BILL_MONEY,
+            ["Interest Rate"],
+            row_styles=bill_row_styles(rows, today),
+        )
+        _show_total(section_records, "Subtotal", SUBTOTAL_LABEL)
+    _show_total(bill_records(bills), "Totals", TOTAL_LABEL)
+
+
+def _show_total(records: Sequence[Mapping[str, object]], caption: str, label: str) -> None:
+    st.caption(caption)
+    show_money_table(
+        display_frame([totals_record(records, BILL_EXPORT, "Description", label)], BILL_EXPORT),
+        BILL_MONEY,
+        ["Interest Rate"],
+    )
 
 
 def _render_table_tab(
@@ -632,7 +740,7 @@ def _parse_bills(text: str) -> list[BillRecord]:
     rows = _read_rows(text, BILL_COLUMNS, _BILL_MESSAGES)
     records: list[BillRecord] = []
     for raw in rows:
-        if _blank_row(raw, [*BILL_COLUMNS, ACCOUNT_MATCH]):
+        if _blank_row(raw, [*BILL_COLUMNS, ACCOUNT_MATCH, SECTION_COLUMN]):
             continue
         parsed = _parse_bill(raw)
         if parsed is None:
@@ -694,6 +802,7 @@ def _parse_bill(raw: Mapping[str, object]) -> BillRecord | None:
         paid_date=paid_on,
         notes=_optional_text(raw.get("Notes")),
         account_match=_optional_text(raw.get(ACCOUNT_MATCH)),
+        section=_optional_text(raw.get(SECTION_COLUMN)),
     )
 
 

@@ -23,30 +23,47 @@ from kirbancials.bills import (
     BILL_COLUMNS,
     BILL_EXPORT,
     BILL_HEADER,
+    BILL_LEGEND,
+    BILL_SECTIONS,
     BILLS_ENV,
+    DUE_SOON_STYLE,
     ENTITY_FEE_COLUMNS,
     ENTITY_FEE_HEADER,
     ENTITY_FEES_ENV,
     FLAG_NOTE,
+    NONE_YET,
     NO_BILLS,
     NO_BILLS_FOR_TYPE,
     NO_ENTITY_FEES,
     NO_PROPERTY_TAXES,
     NO_TYPE,
+    OVERDUE_STYLE,
     PROP_TAX_COLUMNS,
     PROP_TAX_EXPORT,
     PROP_TAX_HEADER,
     PROP_TAXES_ENV,
+    SECTION_CAR,
+    SECTION_COLUMN,
+    SECTION_CREDIT,
+    SECTION_LOC,
+    SECTION_OTHER,
+    SECTION_TAX,
+    SUBTOTAL_LABEL,
     TOTAL_LABEL,
+    BillRecord,
     apply_account_balances,
     bill_flag,
     bill_records,
+    bill_section,
+    canonical_section,
     entity_fee_records,
     filter_bills,
+    infer_section,
     property_tax_records,
     resolve_bills,
     resolve_entity_fees,
     resolve_property_taxes,
+    section_groups,
     sort_bills,
     table_csv,
     type_options,
@@ -97,6 +114,24 @@ SORTED_NAMES = [
     "Undated",
 ]
 
+# Fake round numbers. Section is optional and last. Lines of Credit has one row
+# here so the grouping test can check a subtotal; the page still allows it to
+# be empty.
+SECTIONED = f"""{BILL_HEADER},{ACCOUNT_MATCH},{SECTION_COLUMN}
+Amex Gold,Personal,10,40,10,30,19.99,2026-10-31,2026-11-10,,Inferred,,
+Citi Double Cash,Personal,20,30,5,25,21,2026-11-01,2026-11-08,,Earlier card,,
+Jeep Loan,Personal,100,50,20,30,6,2026-11-01,2026-11-19,,Inferred car,,
+BOA Auto Loan,Business,200,80,0,80,4,2026-11-01,2026-11-03,,Brand plus loan,,
+Sample LOC,Business,21,21,0,21,8,2026-11-01,2026-11-18,,Inferred line,,
+Sample Property Tax,VWH,1,10,0,10,,2026-11-01,2026-11-30,,Inferred tax,,
+County Property Tax,VWH,2,15,15,0,,2026-11-01,2026-11-02,2026-11-02,Paid tax,,Property Taxes
+HOA Dues,Other,3,25,25,0,,2026-11-01,2026-11-04,2026-11-04,Inferred other,,
+Board Fee,Other,4,7,0,7,,2026-11-01,2026-11-28,,Not boa,,
+Local Services,Business,5,9,0,9,,2026-11-01,2026-12-15,,Not loc,,
+Amex Override,Personal,6,11,0,11,,2026-11-01,2026-11-06,,Forced,,Other
+Rent Check,Personal,7,13,0,13,,2026-11-01,2026-11-07,,Unknown section,,Loans
+"""
+
 
 def _bills():
     loaded = resolve_bills({BILLS_ENV: "\ufeff" + BILLS})
@@ -130,6 +165,8 @@ class HeaderTests(unittest.TestCase):
         for header in (BILL_HEADER, PROP_TAX_HEADER, ENTITY_FEE_HEADER):
             self.assertIn(f"`{header}`", readme)
         self.assertIn("`Account Match`", readme)
+        self.assertIn("`Section`", readme)
+        self.assertNotIn(SECTION_COLUMN, BILL_COLUMNS)
         self.assertEqual(BILL_COLUMNS[0], "Description")
         self.assertEqual(PROP_TAX_COLUMNS[2], "1st Half")
         self.assertEqual(ENTITY_FEE_COLUMNS[-2], "Paid From")
@@ -190,7 +227,26 @@ class BillFileTests(unittest.TestCase):
         loaded = resolve_bills({BILLS_ENV: text})
         self.assertIsNone(loaded.warning)
         self.assertEqual(loaded.records[0].account_match, "")
+        self.assertEqual(loaded.records[0].section, "")
         self.assertEqual(apply_account_balances(loaded.records, None)[0].current_balance, None)
+
+    def test_section_column_is_optional_and_stays_off_the_table(self) -> None:
+        omitted = resolve_bills({BILLS_ENV: BILL_HEADER + "\nAmex Gold,Personal,1,2,0,2,5,2026-11-01,2026-11-01,,note\n"})
+        self.assertIsNone(omitted.warning)
+        self.assertEqual(omitted.records[0].section, "")
+        self.assertEqual(bill_section(omitted.records[0]), SECTION_CREDIT)
+        self.assertNotIn(SECTION_COLUMN, bill_records(omitted.records)[0])
+
+        swapped = (
+            f"{BILL_HEADER},{SECTION_COLUMN},{ACCOUNT_MATCH}\n"
+            "Rent Check,Personal,1,2,0,2,5,2026-11-01,2026-11-01,,note,Loans,Sample Card\n"
+        )
+        loaded = resolve_bills({BILLS_ENV: swapped})
+        self.assertIsNone(loaded.warning, loaded.warning)
+        bill = loaded.records[0]
+        self.assertEqual(bill.section, "Loans")
+        self.assertEqual(bill.account_match, "Sample Card")
+        self.assertEqual(bill_section(bill), SECTION_OTHER)
 
     def test_blank_type_is_its_own_filter(self) -> None:
         text = BILL_HEADER + "\nSample, ,1,1,0,1,,2026-11-01,2026-11-01,,\n"
@@ -291,7 +347,8 @@ class ExportTests(unittest.TestCase):
         personal = filter_bills(_bills(), "Personal")
         text = table_csv(bill_records(personal), BILL_EXPORT)
         self.assertTrue(text.startswith(BILL_HEADER + "\n"))
-        self.assertNotIn(ACCOUNT_MATCH, text)
+        self.assertNotIn(ACCOUNT_MATCH, text.splitlines()[0])
+        self.assertNotIn(SECTION_COLUMN, text.splitlines()[0])
         self.assertNotIn("Sample Insurance", text)
         self.assertIn("400.00", text)
         rows = list(pd.read_csv(io.StringIO(text)).itertuples(index=False))
@@ -375,16 +432,24 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(app.tabs[0].label, "Bills")
         self.assertEqual(app.tabs[1].label, "Property Taxes")
         self.assertEqual(app.tabs[2].label, "Entity Fees")
+        self.assertEqual([node.value for node in app.subheader], list(BILL_SECTIONS))
+        self.assertEqual(sum(node.value == NONE_YET for node in app.caption), 4)
         frame = app.dataframe[0].value
         self.assertEqual(frame["Description"].tolist(), SORTED_NAMES)
+        self.assertNotIn(SECTION_COLUMN, list(frame.columns))
         self.assertTrue(pd.api.types.is_numeric_dtype(frame["Current Balance"]))
         self.assertTrue(pd.api.types.is_numeric_dtype(frame["Interest Rate"]))
         self.assertTrue(pd.api.types.is_datetime64_any_dtype(frame["Due Date"]))
         self.assertEqual(list(frame.columns), BILL_COLUMNS)
         self.assertAlmostEqual(frame.loc[frame["Description"] == "Sample Visa", "Current Balance"].iloc[0], 400)
-        totals = app.dataframe[1].value
+        subtotal = app.dataframe[1].value
+        self.assertEqual(subtotal["Description"].iloc[0], SUBTOTAL_LABEL)
+        self.assertAlmostEqual(subtotal["Current Balance"].iloc[0], 1360)
+        totals = app.dataframe[2].value
         self.assertEqual(totals["Description"].iloc[0], TOTAL_LABEL)
         self.assertAlmostEqual(totals["Current Balance"].iloc[0], 1360)
+        self.assertEqual(_column_frame(app, "Property")["Property"].tolist(), ["Sample House", "Sample Lot"])
+        self.assertEqual(_column_frame(app, "LLC")["LLC"].tolist(), ["Sample LLC", "Second LLC"])
         labels = [button.label for button in app.download_button]
         self.assertIn("Export to Excel", labels)
         self.assertEqual(labels.count("Download CSV"), 3)
@@ -398,7 +463,11 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(list(app.exception), [])
         shown = app.dataframe[0].value
         self.assertEqual(shown["Description"].tolist(), ["Sample Insurance", "Sample Auto"])
+        self.assertEqual(app.dataframe[1].value["Description"].iloc[0], SUBTOTAL_LABEL)
         self.assertAlmostEqual(app.dataframe[1].value["Amount Still Due"].iloc[0], 81)
+        self.assertEqual(app.dataframe[2].value["Description"].iloc[0], TOTAL_LABEL)
+        self.assertAlmostEqual(app.dataframe[2].value["Amount Still Due"].iloc[0], 81)
+        self.assertEqual(_column_frame(app, "Property")["Property"].tolist(), ["Sample House", "Sample Lot"])
 
     def test_missing_env_is_an_empty_state(self) -> None:
         script = """
@@ -441,6 +510,190 @@ render_bills()
         visa = frame.loc[frame["Description"] == "Sample Visa", "Current Balance"].iloc[0]
         self.assertAlmostEqual(visa, 10)
 
+    def test_sections_subtotal_and_keep_the_other_tabs(self) -> None:
+        script = _page_script(SECTIONED, TAXES, FEES, "")
+        app = AppTest.from_string(script, default_timeout=30).run()
+        self.assertEqual(list(app.exception), [])
+        self.assertEqual([node.value for node in app.subheader], list(BILL_SECTIONS))
+        self.assertNotIn(NONE_YET, [node.value for node in app.caption])
+        self.assertEqual(app.tabs[1].label, "Property Taxes")
+        self.assertEqual(app.tabs[2].label, "Entity Fees")
+        descriptions = [
+            node.value["Description"].tolist()
+            for node in app.dataframe
+            if "Description" in node.value.columns and node.value["Description"].iloc[0] != SUBTOTAL_LABEL
+            and node.value["Description"].iloc[0] != TOTAL_LABEL
+        ]
+        self.assertEqual(
+            descriptions,
+            [
+                ["Citi Double Cash", "Amex Gold"],
+                ["Sample LOC"],
+                ["BOA Auto Loan", "Jeep Loan"],
+                ["County Property Tax", "Sample Property Tax"],
+                ["HOA Dues", "Amex Override", "Rent Check", "Board Fee", "Local Services"],
+            ],
+        )
+        self.assertNotIn(SECTION_COLUMN, list(app.dataframe[0].value.columns))
+        self.assertEqual(app.dataframe[1].value["Description"].iloc[0], SUBTOTAL_LABEL)
+        self.assertAlmostEqual(app.dataframe[1].value["Statement Balance"].iloc[0], 70)
+        self.assertAlmostEqual(app.dataframe[1].value["Amount Still Due"].iloc[0], 55)
+        labels = [
+            node.value["Description"].iloc[0]
+            for node in app.dataframe
+            if "Description" in node.value.columns
+        ]
+        self.assertEqual(labels.count(SUBTOTAL_LABEL), 5)
+        self.assertEqual(labels.count(TOTAL_LABEL), 1)
+        grand = app.dataframe[10].value
+        self.assertEqual(grand["Description"].iloc[0], TOTAL_LABEL)
+        self.assertAlmostEqual(grand["Statement Balance"].iloc[0], 311)
+        self.assertAlmostEqual(grand["Amount Still Due"].iloc[0], 236)
+        self.assertAlmostEqual(grand["Amount Paid"].iloc[0], 75)
+        self.assertIn("rgba(198, 40, 40, 0.22)", str(app.dataframe[0].proto))
+        paid = app.dataframe[6].value
+        self.assertEqual(paid["Description"].iloc[0], "County Property Tax")
+        self.assertEqual(paid["Paid Date"].iloc[0].date(), date(2026, 11, 2))
+        self.assertEqual(_column_frame(app, "Property")["Property"].tolist(), ["Sample House", "Sample Lot"])
+        self.assertEqual(_column_frame(app, "LLC")["LLC"].iloc[0], "Sample LLC")
+        self.assertEqual(_column_frame(app, "Reg Agent Fee")["Reg Agent Fee"].sum(), 200)
+
+        app.selectbox[0].set_value("Personal").run()
+        self.assertEqual(list(app.exception), [])
+        self.assertEqual(sum(node.value == NONE_YET for node in app.caption), 2)
+        personal = [
+            node.value["Description"].tolist()
+            for node in app.dataframe
+            if "Description" in node.value.columns
+            and node.value["Description"].iloc[0] not in {SUBTOTAL_LABEL, TOTAL_LABEL}
+        ]
+        self.assertEqual(
+            personal,
+            [
+                ["Citi Double Cash", "Amex Gold"],
+                ["Jeep Loan"],
+                ["Amex Override", "Rent Check"],
+            ],
+        )
+        self.assertAlmostEqual(app.dataframe[1].value["Amount Still Due"].iloc[0], 55)
+        grand_rows = [
+            node.value
+            for node in app.dataframe
+            if "Description" in node.value.columns and node.value["Description"].iloc[0] == TOTAL_LABEL
+        ]
+        self.assertAlmostEqual(grand_rows[-1]["Amount Still Due"].iloc[0], 109)
+
+
+class SectionTests(unittest.TestCase):
+    def test_inference_patterns(self) -> None:
+        cases = {
+            "Amex Gold": SECTION_CREDIT,
+            "personal AMEX": SECTION_CREDIT,
+            "Citi Double Cash": SECTION_CREDIT,
+            "Citibank AAdvantage": SECTION_CREDIT,
+            "City Utilities": SECTION_OTHER,
+            "BOA Custom Cash": SECTION_CREDIT,
+            "Board Fee": SECTION_OTHER,
+            "Bank of America Visa": SECTION_CREDIT,
+            "Capital One Venture": SECTION_CREDIT,
+            "Nordstrom card": SECTION_CREDIT,
+            "Neiman Marcus": SECTION_CREDIT,
+            "Marriott Bonvoy": SECTION_CREDIT,
+            "Auto Loan": SECTION_CAR,
+            "Jeep Loan": SECTION_CAR,
+            "jeep loans": SECTION_CAR,
+            "Sample Auto": SECTION_OTHER,
+            "BOA Auto Loan": SECTION_CAR,
+            "Capital One Auto Loan": SECTION_CAR,
+            "Line of Credit": SECTION_LOC,
+            "LOC": SECTION_LOC,
+            "loc payment": SECTION_LOC,
+            "(LOC)": SECTION_LOC,
+            "Local Services": SECTION_OTHER,
+            "HELOC": SECTION_OTHER,
+            "Property Tax": SECTION_TAX,
+            "Property Taxes": SECTION_TAX,
+            "County property tax bill": SECTION_TAX,
+            "Nordstrom Property Tax": SECTION_TAX,
+            "Sample Rent": SECTION_OTHER,
+            "Sample Insurance": SECTION_OTHER,
+            "Sample Visa": SECTION_OTHER,
+        }
+        for description, section in cases.items():
+            self.assertEqual(infer_section(description), section, description)
+
+    def test_explicit_section_wins_over_the_description(self) -> None:
+        self.assertEqual(canonical_section("  credit cards "), SECTION_CREDIT)
+        self.assertEqual(canonical_section("LINES OF CREDIT"), SECTION_LOC)
+        self.assertEqual(canonical_section("Car  Payments"), SECTION_CAR)
+        self.assertIsNone(canonical_section(""))
+        self.assertIsNone(canonical_section("Loans"))
+        self.assertIsNone(canonical_section("Credit Card"))
+
+        forced = _bill("Amex Gold", section="Other", due_date=date(2026, 11, 6))
+        blank = _bill("Amex Gold", section="  ", due_date=date(2026, 11, 2))
+        unknown = _bill("Rent Check", section="Loans", due_date=date(2026, 11, 7))
+        self.assertEqual(bill_section(forced), SECTION_OTHER)
+        self.assertEqual(bill_section(blank), SECTION_CREDIT)
+        self.assertEqual(bill_section(unknown), SECTION_OTHER)
+        groups = dict(section_groups([forced, blank, unknown, _bill("Sample LOC", due_date=None)]))
+        self.assertEqual([name for name, _rows in section_groups([forced])], list(BILL_SECTIONS))
+        self.assertEqual([bill.description for bill in groups[SECTION_CREDIT]], ["Amex Gold"])
+        self.assertEqual([bill.description for bill in groups[SECTION_OTHER]], ["Amex Gold", "Rent Check"])
+        self.assertEqual([bill.description for bill in groups[SECTION_LOC]], ["Sample LOC"])
+        self.assertEqual(groups[SECTION_CAR], ())
+        self.assertEqual(groups[SECTION_TAX], ())
+
+    def test_rows_group_and_subtotal_by_section(self) -> None:
+        loaded = resolve_bills({BILLS_ENV: SECTIONED})
+        self.assertIsNone(loaded.warning, loaded.warning)
+        groups = dict(section_groups(loaded.records))
+        self.assertEqual(
+            [bill.description for bill in groups[SECTION_CREDIT]],
+            ["Citi Double Cash", "Amex Gold"],
+        )
+        self.assertEqual([bill.description for bill in groups[SECTION_LOC]], ["Sample LOC"])
+        self.assertEqual(
+            [bill.description for bill in groups[SECTION_CAR]],
+            ["BOA Auto Loan", "Jeep Loan"],
+        )
+        self.assertEqual(
+            [bill.description for bill in groups[SECTION_TAX]],
+            ["County Property Tax", "Sample Property Tax"],
+        )
+        self.assertEqual(
+            [bill.description for bill in groups[SECTION_OTHER]],
+            ["HOA Dues", "Amex Override", "Rent Check", "Board Fee", "Local Services"],
+        )
+        self.assertEqual(groups[SECTION_TAX][0].paid_date, date(2026, 11, 2))
+        self.assertEqual(bill_flag(groups[SECTION_TAX][0], TODAY), "")
+        self.assertEqual(bill_flag(groups[SECTION_CREDIT][1], TODAY), "overdue")
+        self.assertEqual(loaded.records[0].section, "")
+        self.assertEqual(groups[SECTION_OTHER][1].section, "Other")
+        self.assertEqual(groups[SECTION_OTHER][2].section, "Loans")
+
+        credit = _totals(bill_records(groups[SECTION_CREDIT]), BILL_EXPORT)
+        self.assertAlmostEqual(credit["Statement Balance"], 70)
+        self.assertAlmostEqual(credit["Amount Still Due"], 55)
+        self.assertEqual(credit["Description"], TOTAL_LABEL)
+        other = _totals(bill_records(groups[SECTION_OTHER]), BILL_EXPORT)
+        self.assertAlmostEqual(other["Statement Balance"], 65)
+        self.assertAlmostEqual(other["Amount Still Due"], 40)
+        everyone = _totals(bill_records(sort_bills(loaded.records)), BILL_EXPORT)
+        self.assertAlmostEqual(everyone["Current Balance"], 379)
+        self.assertAlmostEqual(everyone["Statement Balance"], 311)
+        self.assertAlmostEqual(everyone["Amount Paid"], 75)
+        self.assertAlmostEqual(everyone["Amount Still Due"], 236)
+        text = table_csv(bill_records(loaded.records), BILL_EXPORT)
+        self.assertNotIn(SECTION_COLUMN, text.splitlines()[0])
+        self.assertNotIn(ACCOUNT_MATCH, text.splitlines()[0])
+
+    def test_a_file_without_section_still_sorts_inside_other(self) -> None:
+        groups = dict(section_groups(_bills()))
+        self.assertEqual([bill.description for bill in groups[SECTION_OTHER]], SORTED_NAMES)
+        for name in (SECTION_CREDIT, SECTION_LOC, SECTION_CAR, SECTION_TAX):
+            self.assertEqual(groups[name], ())
+
 
 class NavigationTests(unittest.TestCase):
     def test_bills_is_its_own_page_and_login_covers_it(self) -> None:
@@ -457,10 +710,48 @@ class NavigationTests(unittest.TestCase):
         self.assertIn('label="Bills"', links[2])
         self.assertLess(text.index("require_login()"), text.index("navigation.run()"))
         view = (ROOT / "views" / "bills.py").read_text()
-        self.assertIn('render_page_title("Bills")', view)
+        self.assertIn('render_page_title("Bills", legend=BILL_LEGEND)', view)
         self.assertIn("render_bills", view)
         self.assertNotIn("require_login", view)
         self.assertNotIn("APP_PASSWORD", view)
+        self.assertNotIn("<style>", view)
+
+    def test_color_legend_is_the_title_line_and_only_real_colors(self) -> None:
+        self.assertEqual(
+            BILL_LEGEND,
+            (
+                (OVERDUE_STYLE, "Past due, still owed"),
+                (DUE_SOON_STYLE, "Due within 7 days"),
+            ),
+        )
+        source = (ROOT / "kirbancials" / "bills.py").read_text()
+        self.assertEqual(source.count("row_styles="), 1)
+        script = """
+from kirbancials.bills import BILL_LEGEND
+from kirbancials.page_title import render_page_title
+
+render_page_title("Bills", legend=BILL_LEGEND)
+"""
+        app = AppTest.from_string(script, default_timeout=30).run()
+        self.assertEqual(list(app.exception), [])
+        self.assertEqual(len(list(app.html)), 1)
+        body = app.html[0].value
+        self.assertIn('class="page-heading"', body)
+        self.assertIn('class="page-title">Bills</p>', body)
+        self.assertIn('class="page-legend"', body)
+        self.assertLess(body.index('class="page-title"'), body.index('class="page-legend"'))
+        self.assertIn("Past due, still owed", body)
+        self.assertIn("Due within 7 days", body)
+        self.assertIn(OVERDUE_STYLE, body)
+        self.assertIn(DUE_SOON_STYLE, body)
+        self.assertIn("flex-wrap: nowrap", body)
+        self.assertNotIn("Paid", body)
+        plain = AppTest.from_string(
+            'from kirbancials.page_title import render_page_title\nrender_page_title("Profit & Loss")\n',
+            default_timeout=30,
+        ).run()
+        self.assertNotIn("page-legend", plain.html[0].value)
+        self.assertNotIn("page-heading", plain.html[0].value)
 
 
 class MoneyTableTests(unittest.TestCase):
@@ -496,6 +787,30 @@ def _totals(records, columns):
     from kirbancials.bills import totals_record
 
     return totals_record(records, columns, columns[0][0])
+
+
+def _bill(description: str, section: str = "", due_date: date | None = None) -> BillRecord:
+    return BillRecord(
+        description=description,
+        bill_type="Personal",
+        current_balance=None,
+        statement_balance=None,
+        amount_paid=None,
+        amount_still_due=1,
+        interest_rate=None,
+        statement_ending=None,
+        due_date=due_date,
+        paid_date=None,
+        notes="",
+        section=section,
+    )
+
+
+def _column_frame(app, column: str):
+    for node in app.dataframe:
+        if column in node.value.columns:
+            return node.value
+    raise AssertionError(column)
 
 
 def _fill(cell) -> str | None:
