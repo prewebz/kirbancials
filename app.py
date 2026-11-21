@@ -1,14 +1,15 @@
 """Kirbancials entrypoint.
 
-The password gate runs before every page. Profit & Loss is the landing page.
-Balance Sheet is the next sidebar page. Bills follows Balance Sheet.
-VWH P&L follows Bills.
+The password gate runs before every page. Profit & Loss is the landing page,
+the overview. Alerts is the next sidebar page. Balance Sheet follows Alerts.
+Bills follows Balance Sheet. VWH P&L follows Bills.
 """
 
 from __future__ import annotations
 
 import streamlit as st
 
+from kirbancials.alerts import alerts_nav_label, open_alert_count
 from kirbancials.auth import log_out, remember_me_available, render_cookie_sync, require_login
 from kirbancials.refresh import refresh_data, refreshed_caption
 
@@ -18,6 +19,7 @@ require_login()
 navigation = st.navigation(
     [
         st.Page("views/profit_and_loss.py", title="Profit & Loss", default=True),
+        st.Page("views/alerts.py", title="Alerts", url_path="alerts"),
         st.Page("views/balance_sheet.py", title="Balance Sheet", url_path="balance-sheet"),
         st.Page("views/bills.py", title="Bills", url_path="bills"),
         st.Page("views/vwh_pl.py", title="VWH P&L", url_path="vwh"),
@@ -38,6 +40,7 @@ with st.sidebar:
         refresh_data()
     st.caption(refreshed_caption())
     st.page_link("views/profit_and_loss.py", label="Profit & Loss")
+    st.page_link("views/alerts.py", label=alerts_nav_label(open_alert_count()))
     st.page_link("views/balance_sheet.py", label="Balance Sheet")
     st.page_link("views/bills.py", label="Bills")
     st.page_link("views/vwh_pl.py", label="VWH P&L")

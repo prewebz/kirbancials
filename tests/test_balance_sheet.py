@@ -533,17 +533,19 @@ _show_sheet(
 
 
 class NavigationTests(unittest.TestCase):
-    def test_balance_sheet_is_the_second_page_and_login_covers_it(self) -> None:
+    def test_balance_sheet_follows_alerts_and_login_covers_it(self) -> None:
         text = (ROOT / "app.py").read_text()
         pages = [line for line in text.splitlines() if "st.Page(" in line]
         self.assertIn("profit_and_loss.py", pages[0])
         self.assertIn("default=True", pages[0])
-        self.assertIn("balance_sheet.py", pages[1])
-        self.assertNotIn("default=True", pages[1])
+        self.assertIn("alerts.py", pages[1])
+        self.assertIn("balance_sheet.py", pages[2])
+        self.assertNotIn("default=True", pages[2])
         sidebar = text.split("with st.sidebar:", 1)[1]
         links = [line for line in sidebar.splitlines() if "st.page_link" in line]
         self.assertIn("profit_and_loss.py", links[0])
-        self.assertIn("balance_sheet.py", links[1])
+        self.assertIn("alerts.py", links[1])
+        self.assertIn("balance_sheet.py", links[2])
         self.assertLess(text.index("require_login()"), text.index("navigation.run()"))
         view = (ROOT / "views" / "balance_sheet.py").read_text()
         self.assertIn("render_balance_sheet", view)
