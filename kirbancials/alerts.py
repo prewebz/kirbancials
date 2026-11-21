@@ -76,8 +76,10 @@ _ISO_DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 _ZERO_TIME = (" 00:00:00", "T00:00:00", "T00:00:00Z")
 _MARKDOWN = ("\\", "$", "*", "_", "`", "[", "]")
 
-# The marker sits in the row so the shell can be tinted. A style-only block
-# is sent to Streamlit's event container and does not add a row.
+# One horizontal row is the box. The marker only carries the type so the
+# row can be tinted; it does not take space. Rows are about 38px, 6px apart.
+_ROW_HEIGHT = 38
+_ROW_GAP = 6
 _STYLES = """
 <style>
   .alert-group {
@@ -86,52 +88,68 @@ _STYLES = """
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: rgba(49, 51, 63, 0.62);
-    margin: 0.8rem 0 0.15rem 0;
+    margin: 0.7rem 0 0.1rem 0;
     padding: 0;
   }
   .alert-group-count {
     margin-left: 0.4rem;
     letter-spacing: 0;
   }
-  [data-testid="stElementContainer"]:has(.alert-marker) {
-    display: none !important;
-    height: 0 !important;
-    min-height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-  [data-testid="stVerticalBlock"]:has(.alert-marker):not(:has([data-testid="stVerticalBlock"] .alert-marker)) {
+  [data-testid="stHorizontalBlock"]:has(.alert-marker) {
+    box-sizing: border-box;
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
+    align-items: center !important;
     border-left-width: 4px;
     border-left-style: solid;
     border-radius: 6px;
-    padding: 0.05rem 0.4rem 0.05rem 0.7rem;
-    margin: 0.22rem 0;
+    padding: 0 0.55rem 0 0.7rem !important;
+    margin: 0 !important;
+    overflow: hidden;
   }
-  [data-testid="stVerticalBlock"]:has(.alert-past_due):not(:has([data-testid="stVerticalBlock"] .alert-past_due)) {
+  [data-testid="stHorizontalBlock"]:has(.alert-past_due) {
     border-left-color: #c62828;
     background: rgba(198, 40, 40, 0.12);
   }
-  [data-testid="stVerticalBlock"]:has(.alert-due_soon):not(:has([data-testid="stVerticalBlock"] .alert-due_soon)) {
+  [data-testid="stHorizontalBlock"]:has(.alert-due_soon) {
     border-left-color: #e6a000;
     background: rgba(230, 160, 0, 0.18);
   }
-  [data-testid="stVerticalBlock"]:has(.alert-watch):not(:has([data-testid="stVerticalBlock"] .alert-watch)) {
+  [data-testid="stHorizontalBlock"]:has(.alert-watch) {
     border-left-color: #1565c0;
     background: rgba(21, 101, 192, 0.1);
   }
-  [data-testid="stVerticalBlock"]:has(.alert-info):not(:has([data-testid="stVerticalBlock"] .alert-info)) {
+  [data-testid="stHorizontalBlock"]:has(.alert-info) {
     border-left-color: #9e9e9e;
     background: rgba(120, 120, 120, 0.12);
   }
-  [data-testid="stVerticalBlock"]:has(.alert-marker):not(:has([data-testid="stVerticalBlock"] .alert-marker)) [data-testid="stMarkdown"] p {
-    margin: 0;
+  [data-testid="stHorizontalBlock"]:has(.alert-marker) > [data-testid="stElementContainer"]:has(.alert-marker) {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    flex: 0 0 0px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
   }
-  [data-testid="stVerticalBlock"]:has(.alert-marker):not(:has([data-testid="stVerticalBlock"] .alert-marker)) [data-testid^="stBaseButton"] {
+  [data-testid="stHorizontalBlock"]:has(.alert-marker) [data-testid="stElementContainer"] {
+    min-height: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+  }
+  [data-testid="stHorizontalBlock"]:has(.alert-marker) [data-testid="stMarkdown"] p {
+    margin: 0;
+    line-height: 1.2;
+  }
+  [data-testid="stHorizontalBlock"]:has(.alert-marker) [data-testid^="stBaseButton"] {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
-    padding: 0 0.1rem !important;
     min-height: 0 !important;
+    height: 24px !important;
+    padding: 0 0.1rem !important;
+    line-height: 24px !important;
     color: rgba(49, 51, 63, 0.62) !important;
     font-size: 0.75rem !important;
     font-weight: 500 !important;
@@ -299,16 +317,17 @@ def render_alerts() -> None:
         return
     st.caption(DISMISS_NOTE)
     _styles()
-    for kind, label, rows in groups:
-        count = len(rows)
-        st.html(
-            '<p class="alert-group">'
-            f'<span class="alert-group-name">{_escape(label)}</span>'
-            f'<span class="alert-group-count">{count}</span>'
-            "</p>"
-        )
-        for record in rows:
-            _render_row(record, dismiss=True)
+    with st.container(gap=_ROW_GAP):
+        for kind, label, rows in groups:
+            count = len(rows)
+            st.html(
+                '<p class="alert-group">'
+                f'<span class="alert-group-name">{_escape(label)}</span>'
+                f'<span class="alert-group-count">{count}</span>'
+                "</p>"
+            )
+            for record in rows:
+                _render_row(record, dismiss=True)
 
 
 def render_alert_strip() -> None:
@@ -322,30 +341,30 @@ def render_alert_strip() -> None:
     if not rows:
         return
     _styles()
-    st.html('<p class="alert-group">Alerts</p>')
-    for record in rows:
-        _render_row(record, dismiss=False)
-    extra = len(urgent) - len(rows)
-    if extra:
-        st.caption(f"{extra} more on Alerts")
+    with st.container(gap=_ROW_GAP):
+        st.html('<p class="alert-group">Alerts</p>')
+        for record in rows:
+            _render_row(record, dismiss=False)
+        extra = len(urgent) - len(rows)
+        if extra:
+            st.caption(f"{extra} more on Alerts")
 
 
 def _render_row(record: AlertRecord, *, dismiss: bool) -> None:
-    with st.container(gap="xxsmall"):
+    with st.container(horizontal=True, vertical_alignment="center", height=_ROW_HEIGHT, gap="small"):
         st.html(f'<span class="alert-marker alert-{record.kind}"></span>')
-        with st.container(horizontal=True, vertical_alignment="center", gap="small"):
-            st.markdown(_ICONS[record.kind], width="content")
-            st.markdown(_plain(record.title), width="stretch")
-            if record.detail:
-                st.markdown(_plain(record.detail), text_alignment="right", width="content")
-            if dismiss:
-                st.button(
-                    "Dismiss",
-                    key=dismiss_key(record.alert_id),
-                    type="tertiary",
-                    on_click=dismiss_alert,
-                    args=(record.alert_id,),
-                )
+        st.markdown(_ICONS[record.kind], width="content")
+        st.markdown(_plain(record.title), width="stretch")
+        if record.detail:
+            st.markdown(_plain(record.detail), text_alignment="right", width="content")
+        if dismiss:
+            st.button(
+                "Dismiss",
+                key=dismiss_key(record.alert_id),
+                type="tertiary",
+                on_click=dismiss_alert,
+                args=(record.alert_id,),
+            )
 
 
 def _styles() -> None:
