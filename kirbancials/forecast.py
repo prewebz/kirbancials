@@ -1,11 +1,13 @@
-"""Month-end card-spend forecast for the profit and loss header.
+"""Month-end forecast of total expenses for the profit and loss header.
 
-Large one-time charges and recurring bills are counted once. Only the
-remaining everyday spend is projected, and that pace leans on recent history
-early in the month and on this month as the month goes on.
+Card charges are split into one-time, recurring, and everyday spend. Large
+one-time charges and recurring bills are counted once. Only everyday card
+spend is paced, leaning on recent history early in the month and on this
+month as the month goes on.
 
-The forecast uses card transactions only. Statement-only cards, loan
-interest, and scheduled interest stay in Total expenses and are not paced.
+Interest, scheduled loans, and statement-only cards are not paced. They are
+included at the full calendar month's amount from the same expense lines as
+Total expenses. The result is never below month-to-date total expenses.
 """
 
 from __future__ import annotations
@@ -27,8 +29,15 @@ from kirbancials.activity import (
     TXN_MERCHANT,
     TXN_PENDING,
 )
-from kirbancials.sources import loan_accounts
-from kirbancials.spend import is_card_payment
+from kirbancials.discretionary import (
+    CATEGORY_UP_RATIO,
+    discretionary_line_amount,
+    discretionary_previous_month,
+    is_discretionary_transaction,
+    is_financing_expense,
+)
+from kirbancials.periods import Period
+from kirbancials.spend import expense_lines
 
 # A charge at least this large is one-time even when the card has no history.
 ONE_TIME_MIN_AMOUNT = 1000.0
@@ -60,7 +69,12 @@ class FlaggedCharge:
 
 @dataclass(frozen=True)
 class ExpenseForecast:
-    """Card-spend forecast for one calendar month, through `as_of`."""
+    """Total-expense forecast for one calendar month, through `as_of`.
+
+    `other_expenses` is interest, scheduled loans, and statement cards for
+    the full month. `other_card_spend` is card spend already in Total
+    expenses that the pace split did not list on its own.
+    """
 
     total: float
     one_time: float
@@ -74,6 +88,24 @@ class ExpenseForecast:
     one_time_charges: tuple[FlaggedCharge, ...]
     recurring_charges: tuple[FlaggedCharge, ...]
     expected_bills: tuple[FlaggedCharge, ...]
+    other_expenses: float = 0.0
+    other_card_spend: float = 0.0
+    month_to_date: float = 0.0
+    categories: tuple[CategoryTrend, ...] = ()
+
+
+@dataclass(frozen=True)
+class CategoryTrend:
+    """Discretionary spend for one category."""
+
+    category: str
+    month_to_date: float
+    forecast: float
+    last_month: float
+    trailing_average: float
+    increase: float
+    trending: bool
+    transactions: tuple[FlaggedCharge, ...]
 
 
 @dataclass(frozen=True)
@@ -97,11 +129,18 @@ class _Pattern:
     day: int
 
 
-def month_end_forecast(transactions: pd.DataFrame | None, as_of: date) -> ExpenseForecast:
-    """Forecast card spend through the end of the month that contains `as_of`.
+def month_end_forecast(
+    transactions: pd.DataFrame | None,
+    as_of: date,
+    monthly: pd.DataFrame | None = None,
+    balances: pd.DataFrame | None = None,
+    schedule: pd.DataFrame | None = None,
+) -> ExpenseForecast:
+    """Forecast total expenses through the end of the month that contains `as_of`.
 
-    `as_of` is the last day counted. A finished month has no days left and no
-    bills still to come, so the forecast equals that month's actual card spend.
+    `as_of` is the last day already counted. Card charges already in Total
+    expenses stay in the forecast. A negative everyday pace does not reduce
+    them. Interest and statement cards use the full month.
     """
     month_start, through, month_end = _month_bounds(as_of)
     charges = _spend_charges(transactions)
@@ -134,27 +173,288 @@ def month_end_forecast(transactions: pd.DataFrame | None, as_of: date) -> Expens
     trailing_pace = _trailing_everyday_pace(charges, patterns, month_start)
     weight = days_elapsed / days_in_month if days_in_month else 0.0
     blended = (1.0 - weight) * trailing_pace + weight * month_pace
-    total = (
-        one_time_total
-        + recurring_total
-        + _sum_flagged(expected)
-        + everyday_total
-        + blended * days_remaining
+    paced = max(blended, 0.0) * days_remaining
+    card_mtd, other_mtd, _card_full, other_full = _expense_split(
+        transactions, monthly, balances, schedule, month_start, through, month_end
+    )
+    classified = one_time_total + recurring_total + everyday_total
+    other_card = max(card_mtd - classified, 0.0)
+    other_expenses = max(other_full, other_mtd)
+    bills = _sum_flagged(expected)
+    total = classified + other_card + bills + paced + other_expenses
+    month_to_date = card_mtd + other_mtd
+    if total < month_to_date:
+        other_expenses += month_to_date - total
+        total = month_to_date
+    categories = _category_trends(
+        charges,
+        one_time,
+        recurring,
+        everyday,
+        expected,
+        patterns,
+        medians,
+        month_start,
+        through,
+        days_elapsed,
+        days_in_month,
+        transactions,
+        monthly,
+        balances,
+        schedule,
     )
     return ExpenseForecast(
         total=total,
         one_time=one_time_total,
         recurring_posted=recurring_total,
-        bills_still_to_come=_sum_flagged(expected),
+        bills_still_to_come=bills,
         everyday_to_date=everyday_total,
         everyday_pace=blended,
         days_elapsed=days_elapsed,
         days_remaining=days_remaining,
-        last_month_actual=_last_month_actual(charges, month_start),
+        last_month_actual=_last_month_total(
+            transactions, monthly, balances, schedule, month_start
+        ),
         one_time_charges=tuple(_flag(charge, "one-time") for charge in one_time),
         recurring_charges=tuple(_flag(charge, "recurring") for charge in recurring),
         expected_bills=tuple(expected),
+        other_expenses=other_expenses,
+        other_card_spend=other_card,
+        month_to_date=month_to_date,
+        categories=categories,
     )
+
+
+def _expense_split(
+    transactions: pd.DataFrame | None,
+    monthly: pd.DataFrame | None,
+    balances: pd.DataFrame | None,
+    schedule: pd.DataFrame | None,
+    month_start: date,
+    through: date,
+    month_end: date,
+) -> tuple[float, float, float, float]:
+    """Transaction and other totals for month-to-date and for the full month."""
+    card_mtd, other_mtd = _line_totals(transactions, monthly, balances, schedule, month_start, through)
+    card_full, other_full = _line_totals(transactions, monthly, balances, schedule, month_start, month_end)
+    return card_mtd, other_mtd, card_full, other_full
+
+
+def _line_totals(
+    transactions: pd.DataFrame | None,
+    monthly: pd.DataFrame | None,
+    balances: pd.DataFrame | None,
+    schedule: pd.DataFrame | None,
+    start: date,
+    end: date,
+) -> tuple[float, float]:
+    period = Period("forecast", "Forecast", start, end)
+    lines = expense_lines(
+        transactions if transactions is not None else pd.DataFrame(),
+        monthly if monthly is not None else pd.DataFrame(),
+        period,
+        balances,
+        schedule,
+    )
+    card = 0.0
+    other = 0.0
+    for line in lines:
+        amount = discretionary_line_amount(line, transactions, period)
+        if amount is None or is_financing_expense(line):
+            continue
+        if line.data_type == "transactions":
+            card += amount
+        else:
+            other += amount
+    return card, other
+
+
+def _last_month_total(
+    transactions: pd.DataFrame | None,
+    monthly: pd.DataFrame | None,
+    balances: pd.DataFrame | None,
+    schedule: pd.DataFrame | None,
+    month_start: date,
+) -> float | None:
+    """Last month's discretionary total, hidden when that month has none."""
+    period = Period("forecast", "Forecast", month_start, month_start)
+    return discretionary_previous_month(transactions, monthly, period, balances, schedule)
+
+
+def _category_trends(
+    charges: list[_Charge],
+    one_time: list[_Charge],
+    recurring: list[_Charge],
+    everyday: list[_Charge],
+    expected: list[FlaggedCharge],
+    patterns: list[_Pattern],
+    medians: dict[str, float],
+    month_start: date,
+    through: date,
+    days_elapsed: int,
+    days_in_month: int,
+    transactions: pd.DataFrame | None,
+    monthly: pd.DataFrame | None,
+    balances: pd.DataFrame | None,
+    schedule: pd.DataFrame | None,
+) -> tuple[CategoryTrend, ...]:
+    """This month, a paced forecast, last month, and the prior three-month average."""
+    one_ids = {id(charge) for charge in one_time}
+    recurring_ids = {id(charge) for charge in recurring}
+    everyday_ids = {id(charge) for charge in everyday}
+    prior_months = _prior_month_keys(month_start, 3)
+    prior_keys = set(prior_months)
+    last_key = prior_months[0] if prior_months else None
+    window_start, window_end = _trailing_window(month_start)
+    buckets: dict[str, dict[str, object]] = {}
+
+    def bucket(name: str) -> dict[str, object]:
+        label = name.strip() or "Uncategorized"
+        found = buckets.get(label)
+        if found is None:
+            found = {
+                "mtd": 0.0,
+                "last": 0.0,
+                "trail": 0.0,
+                "one": 0.0,
+                "recurring": 0.0,
+                "everyday": 0.0,
+                "bills": 0.0,
+                "history_everyday": 0.0,
+                "transactions": [],
+            }
+            buckets[label] = found
+        return found
+
+    for charge in charges:
+        label = charge.category or "Uncategorized"
+        key = (charge.when.year, charge.when.month)
+        row = bucket(label)
+        if _in_month_through(charge.when, month_start, through):
+            row["mtd"] = float(row["mtd"]) + charge.amount
+            row["transactions"].append(_flag(charge, "spend"))
+            if id(charge) in one_ids:
+                row["one"] = float(row["one"]) + charge.amount
+            elif id(charge) in recurring_ids:
+                row["recurring"] = float(row["recurring"]) + charge.amount
+            elif id(charge) in everyday_ids:
+                row["everyday"] = float(row["everyday"]) + charge.amount
+        if last_key is not None and key == last_key:
+            row["last"] = float(row["last"]) + charge.amount
+        if key in prior_keys:
+            row["trail"] = float(row["trail"]) + charge.amount
+        if window_start <= charge.when <= window_end and not _is_one_time(charge, medians):
+            if _matches_pattern(charge, patterns) is None:
+                row["history_everyday"] = float(row["history_everyday"]) + charge.amount
+
+    for bill in expected:
+        label = _category_for_bill(bill, charges, month_start)
+        row = bucket(label)
+        row["bills"] = float(row["bills"]) + bill.amount
+
+    _add_statement_categories(
+        buckets, bucket, transactions, monthly, balances, schedule, month_start, through, prior_months
+    )
+
+    trends: list[CategoryTrend] = []
+    for label, row in buckets.items():
+        mtd = float(row["mtd"])
+        everyday = float(row["everyday"])
+        month_pace = everyday / days_elapsed if days_elapsed else 0.0
+        trail_pace = float(row["history_everyday"]) / TRAILING_PACE_DAYS
+        weight = days_elapsed / days_in_month if days_in_month else 0.0
+        blended = (1.0 - weight) * trail_pace + weight * month_pace
+        projected = (
+            float(row["one"])
+            + float(row["recurring"])
+            + float(row["bills"])
+            + everyday
+            + max(blended, 0.0) * (days_in_month - days_elapsed)
+        )
+        if projected < mtd:
+            projected = mtd
+        average = float(row["trail"]) / 3.0
+        increase = projected - average
+        trending = projected >= average * CATEGORY_UP_RATIO and (projected > 0 or average > 0)
+        if mtd == 0 and projected == 0 and float(row["last"]) == 0 and average == 0:
+            continue
+        transactions_shown = tuple(
+            sorted(row["transactions"], key=lambda item: (item.when, item.merchant), reverse=True)
+        )
+        trends.append(
+            CategoryTrend(
+                category=label,
+                month_to_date=mtd,
+                forecast=projected,
+                last_month=float(row["last"]),
+                trailing_average=average,
+                increase=increase,
+                trending=trending,
+                transactions=transactions_shown,
+            )
+        )
+    trends.sort(key=lambda item: (-item.increase, item.category.casefold()))
+    return tuple(trends)
+
+
+def _category_for_bill(bill: FlaggedCharge, charges: list[_Charge], month_start: date) -> str:
+    latest: _Charge | None = None
+    for charge in charges:
+        if charge.when >= month_start or charge.amount <= 0:
+            continue
+        if charge.account != bill.account:
+            continue
+        if _merchant_key(charge.merchant) != _merchant_key(bill.merchant):
+            continue
+        if latest is None or charge.when > latest.when:
+            latest = charge
+    if latest is None or not latest.category:
+        return "Uncategorized"
+    return latest.category
+
+
+def _add_statement_categories(
+    buckets: dict[str, dict[str, object]],
+    bucket,
+    transactions: pd.DataFrame | None,
+    monthly: pd.DataFrame | None,
+    balances: pd.DataFrame | None,
+    schedule: pd.DataFrame | None,
+    month_start: date,
+    through: date,
+    prior_months: list[tuple[int, int]],
+) -> None:
+    """Statement cards have no category column. Each card is its own row."""
+    periods = [(month_start, through, "mtd")]
+    for year, month in prior_months:
+        start = date(year, month, 1)
+        last = calendar.monthrange(year, month)[1]
+        kind = "last" if (year, month) == prior_months[0] else "older"
+        periods.append((start, date(year, month, last), kind))
+    full_last = calendar.monthrange(month_start.year, month_start.month)[1]
+    periods.append((month_start, date(month_start.year, month_start.month, full_last), "full"))
+    for start, end, kind in periods:
+        period = Period("forecast", "Forecast", start, end)
+        lines = expense_lines(
+            transactions if transactions is not None else pd.DataFrame(),
+            monthly if monthly is not None else pd.DataFrame(),
+            period,
+            balances,
+            schedule,
+        )
+        for line in lines:
+            if line.data_type != "statements" or is_financing_expense(line):
+                continue
+            row = bucket(line.name)
+            if kind == "mtd":
+                row["mtd"] = float(row["mtd"]) + line.total
+            elif kind == "full":
+                row["one"] = float(row["one"]) + line.total
+            elif kind == "last":
+                row["last"] = float(row["last"]) + line.total
+                row["trail"] = float(row["trail"]) + line.total
+            else:
+                row["trail"] = float(row["trail"]) + line.total
 
 
 def _month_bounds(as_of: date) -> tuple[date, date, date]:
@@ -179,7 +479,6 @@ def _spend_charges(transactions: pd.DataFrame | None) -> list[_Charge]:
         return []
     if TXN_AMOUNT not in transactions.columns:
         return []
-    loans = loan_accounts()
     charges: list[_Charge] = []
     for record in transactions.to_dict("records"):
         when = _as_date(record.get(TXN_DATE))
@@ -187,12 +486,10 @@ def _spend_charges(transactions: pd.DataFrame | None) -> list[_Charge]:
         if when is None or amount is None:
             continue
         account = _text(record.get(TXN_ACCOUNT))
-        if account in loans:
-            continue
         merchant = _text(record.get(TXN_MERCHANT))
         category = _text(record.get(TXN_CATEGORY))
         description = _text(record.get(TXN_DESCRIPTION))
-        if is_card_payment(amount, category, merchant, description):
+        if not is_discretionary_transaction(amount, category, merchant, description, account):
             continue
         pending = bool(record.get(TXN_PENDING))
         charges.append(
@@ -410,18 +707,6 @@ def _trailing_window(month_start: date) -> tuple[date, date]:
     end = month_start - timedelta(days=1)
     start = end - timedelta(days=TRAILING_PACE_DAYS - 1)
     return start, end
-
-
-def _last_month_actual(charges: list[_Charge], month_start: date) -> float | None:
-    prior = (month_start.replace(day=1) - timedelta(days=1)).replace(day=1)
-    chosen = [
-        charge
-        for charge in charges
-        if charge.when.year == prior.year and charge.when.month == prior.month
-    ]
-    if not chosen:
-        return None
-    return _sum(chosen)
 
 
 def _in_month_through(when: date, month_start: date, through: date) -> bool:

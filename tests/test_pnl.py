@@ -689,15 +689,15 @@ _income_rows(
 )
 _expense_rows(
     [
-        ExpenseLine("card_small", "Sample card small", "transactions", 40, None, 0, 0, 0, None),
-        ExpenseLine("card_big", "Sample card big", "transactions", 800, None, 0, 0, 0, None),
+        (ExpenseLine("card_small", "Sample card small", "transactions", 40, None, 0, 0, 0, None), 40),
+        (ExpenseLine("card_big", "Sample card big", "transactions", 800, None, 0, 0, 0, None), 800),
     ],
     period,
 )
 _expense_rows(
     [
-        ExpenseLine("loan_small", "Sample loan small", "loan", 10, None, 0, 0, 0, None),
-        ExpenseLine("loan_big", "Sample loan big", "loan", 5000, None, 0, 0, 0, None),
+        (ExpenseLine("loan_small", "Sample loan small", "loan", 10, None, 0, 0, 0, None), 10),
+        (ExpenseLine("loan_big", "Sample loan big", "loan", 5000, None, 0, 0, 0, None), 5000),
     ],
     period,
 )
@@ -733,7 +733,9 @@ _expense_rows(
         self.assertLess(rendered.index("$5,000.00"), rendered.index("$10.00"))
         self.assertLess(links.index("Sample card small"), links.index("Sample loan big"))
         page = inspect.getsource(render_profit_and_loss)
-        self.assertLess(page.index("_expense_rows(schedule_lines, period)"), page.index("**Total expenses**"))
+        self.assertIn("FINANCING_NOTE", page)
+        self.assertNotIn("_expense_rows(schedule_lines", page)
+        self.assertLess(page.index("_expense_rows(shown, period)"), page.index("**Total expenses**"))
 
 
 class PriorMonthLabelTests(unittest.TestCase):
