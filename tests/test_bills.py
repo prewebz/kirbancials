@@ -458,6 +458,13 @@ class RenderTests(unittest.TestCase):
         self.assertIn(ACCOUNT_MATCH_NOTE, rendered)
         self.assertIn('"format": "dollar"', app.dataframe[0].proto.columns)
         self.assertIn("rgba(198, 40, 40, 0.22)", str(app.dataframe[0].proto))
+        _assert_bold_columns(self, app.dataframe[0].proto, BILL_COLUMNS)
+        _assert_bold_columns(self, app.dataframe[1].proto, BILL_COLUMNS)
+        _assert_bold_columns(self, app.dataframe[2].proto, BILL_COLUMNS)
+        tax = next(node for node in app.dataframe if "Property" in node.value.columns)
+        fee = next(node for node in app.dataframe if "LLC" in node.value.columns)
+        self.assertNotIn("font-weight", str(tax.proto))
+        self.assertNotIn("font-weight", str(fee.proto))
 
         app.selectbox[0].set_value("Business").run()
         self.assertEqual(list(app.exception), [])
@@ -781,6 +788,53 @@ show_money_table(
         self.assertIn("rgba(198, 40, 40, 0.22)", str(app.dataframe[0].proto))
         # The default path, with no row styles, is what the other pages use.
         self.assertTrue(callable(show_money_table))
+
+    def test_bold_columns_keep_the_row_color_and_the_value_types(self) -> None:
+        script = """
+import pandas as pd
+from kirbancials.formatting import show_money_table
+
+frame = pd.DataFrame(
+    {
+        "Description": ["Sample due", "Sample later"],
+        "Amount Still Due": [25.0, 5.0],
+        "Due Date": pd.to_datetime(["2026-11-10", "2026-12-01"]),
+        "Notes": ["owed", "later"],
+    }
+)
+show_money_table(
+    frame,
+    ["Amount Still Due"],
+    row_styles=["background-color: rgba(198, 40, 40, 0.22)", ""],
+    bold_columns=["Amount Still Due", "Due Date", "Missing"],
+)
+"""
+        app = AppTest.from_string(script, default_timeout=30).run()
+        self.assertEqual(list(app.exception), [])
+        shown = app.dataframe[0].value
+        self.assertTrue(pd.api.types.is_numeric_dtype(shown["Amount Still Due"]))
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(shown["Due Date"]))
+        self.assertIn("rgba(198, 40, 40, 0.22)", str(app.dataframe[0].proto))
+        _assert_bold_columns(self, app.dataframe[0].proto, list(shown.columns))
+
+
+def _assert_bold_columns(test, proto, columns) -> None:
+    import re
+
+    match = re.search(r'styles: "(.*?)"', str(proto), re.DOTALL)
+    test.assertIsNotNone(match)
+    styles = match.group(1)
+    bold_indexes = {columns.index("Amount Still Due"), columns.index("Due Date")}
+    seen = set()
+    for rule in styles.split("}"):
+        if "font-weight: 700" not in rule:
+            continue
+        selectors = rule.split("{", 1)[0]
+        for piece in selectors.split(","):
+            column = int(piece.strip().rsplit("_col", 1)[1])
+            test.assertIn(column, bold_indexes)
+            seen.add(column)
+    test.assertEqual(seen, bold_indexes)
 
 
 def _totals(records, columns):

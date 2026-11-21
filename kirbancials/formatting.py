@@ -123,6 +123,9 @@ def _datetime_column_config(display: pd.DataFrame) -> dict[str, object]:
     return config
 
 
+_BOLD = "font-weight: 700"
+
+
 def show_money_table(
     frame: pd.DataFrame,
     money_columns: Sequence[str],
@@ -130,6 +133,7 @@ def show_money_table(
     *,
     percent_format: str = "%.2f%%",
     row_styles: Sequence[str] | None = None,
+    bold_columns: Sequence[str] = (),
 ) -> None:
     """Show a table whose money, percent, and date columns stay sortable values.
 
@@ -137,6 +141,7 @@ def show_money_table(
     datetimes. Streamlit formats them for display and sorts on the values.
     `row_styles`, when the same length as the frame, is one CSS style per row.
     An empty string leaves that row unstyled. Other callers omit it.
+    `bold_columns` draws those values in bold and keeps any row color.
     """
     import streamlit as st
 
@@ -146,13 +151,23 @@ def show_money_table(
     for column in [*money, *percents]:
         display[column] = pd.to_numeric(display[column], errors="coerce")
     data: object = display
-    if row_styles is not None and len(row_styles) == len(display):
+    bold = {column for column in bold_columns if column in display.columns}
+    paint_rows = row_styles is not None and len(row_styles) == len(display)
+    if paint_rows or bold:
         display = display.reset_index(drop=True)
-        styles = list(row_styles)
+        styles = list(row_styles) if paint_rows else []
 
         def paint(row: pd.Series) -> list[str]:
-            style = styles[int(row.name)] if int(row.name) < len(styles) else ""
-            return [style] * len(row)
+            base = ""
+            if paint_rows and int(row.name) < len(styles):
+                base = styles[int(row.name)] or ""
+            painted: list[str] = []
+            for column in row.index:
+                parts = [base] if base else []
+                if column in bold:
+                    parts.append(_BOLD)
+                painted.append("; ".join(parts))
+            return painted
 
         data = display.style.apply(paint, axis=1)
     config = money_column_config(money)
