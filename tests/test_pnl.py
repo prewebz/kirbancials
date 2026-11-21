@@ -538,6 +538,7 @@ class LoanInterestTests(unittest.TestCase):
 
 PAGE_TITLES = {
     "profit_and_loss.py": "Profit & Loss",
+    "alerts.py": "Alerts",
     "balance_sheet.py": "Balance Sheet",
     "bills.py": "Bills",
     "vwh_pl.py": "VWH P&L",
@@ -553,7 +554,7 @@ class PageTitleTests(unittest.TestCase):
             view = (ROOT / "views" / name).read_text()
             self.assertRegex(
                 view,
-                rf'render_page_title\(\s*"{re.escape(title)}"(?:,\s*legend=\w+)?\s*\)',
+                rf'render_page_title\(\s*"{re.escape(title)}"(?:,\s*(?:legend|badge)=\w+(?:\(\))?){{0,2}}\s*\)',
                 name,
             )
             self.assertNotIn("st.title(", view, name)

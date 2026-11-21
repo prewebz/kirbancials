@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from kirbancials.activity import load_balances, load_transactions, resolve_balances, resolve_transactions
+from kirbancials.alerts import render_alert_strip
 from kirbancials.data import FinanceDataError, load_dataset, resolve_origin
 from kirbancials.discretionary import (
     FINANCING_NOTE,
@@ -56,6 +57,8 @@ HOME_PAGE = "views/profit_and_loss.py"
 
 
 def render_profit_and_loss() -> None:
+    # Profit & Loss is the overview. Urgent alerts sit above the period figures.
+    render_alert_strip()
     transactions, monthly, balances, sample, errors = _load()
     for message in errors:
         st.error(message)

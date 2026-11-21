@@ -2,7 +2,7 @@
 
 Personal finance dashboard for credit card statement summaries and other expenses. It is a [Streamlit](https://streamlit.io/) app meant to run as a free Python web service on [Render](https://render.com/).
 
-After login the landing page is **Profit & Loss**. **Balance Sheet** is the next page in the sidebar. **Bills** follows Balance Sheet. **VWH P&L** follows Bills. Profit & Loss totals cash income and expenses for a period you pick. Each expense name links to that source, and each income total links to that income source. **Daily spending** and **Monthly statements** stay available from the sidebar.
+After login the landing page is **Profit & Loss**, the overview. **Alerts** is the next page in the sidebar. **Balance Sheet** follows Alerts. **Bills** follows Balance Sheet. **VWH P&L** follows Bills. Profit & Loss totals cash income and expenses for a period you pick. Each expense name links to that source, and each income total links to that income source. **Daily spending** and **Monthly statements** stay available from the sidebar.
 
 Expense sources are registered in `kirbancials/sources.py`. Citibank - 7690 reads transactions for `Citi AAdvantage card ending 7690`. Nordstrom reads statement months for `Nordstrom card ending 5488`. Any other Account in the data is still listed under its own name. See [Adding sources](#adding-sources).
 
@@ -25,7 +25,7 @@ A browser reload keeps the login for 30 days. The `kirbancials_auth` cookie is a
 
 The cookie is `SameSite=Lax`. It is `Secure` on HTTPS, which is how Render serves the app. Local HTTP omits `Secure` so the browser will store the cookie. It is not `HttpOnly`: the password check runs in the Streamlit session, and a page script cannot set `HttpOnly`. If `AUTH_COOKIE_SECRET` is unset, login still lasts until the tab session ends, and the sidebar says remembered login is off.
 
-If `APP_PASSWORD` is unset, the app shows an error and stops. It does not render balances, charts, or tables until the password matches. The comparison uses `hmac.compare_digest`. There is no separate password for Balance Sheet, Bills, or any other page.
+If `APP_PASSWORD` is unset, the app shows an error and stops. It does not render balances, charts, or tables until the password matches. The comparison uses `hmac.compare_digest`. There is no separate password for Balance Sheet, Bills, Alerts, or any other page.
 
 With no data configured, the app loads the bundled samples and shows a banner that the numbers are fake.
 
@@ -256,9 +256,38 @@ LLC registered agent fees and franchise taxes. The header row is exactly:
 
 The totals row adds Reg Agent Fee and Franchise Tax only. Rows stay in file order.
 
+## Alerts
+
+Alerts is its own sidebar page, immediately after Profit & Loss. Logging in once covers it. The page reads `FINANCE_ALERTS_CSV`: the raw CSV text, not gzipped. If that variable is missing or blank, the page says `No alerts` and the other pages still load. Do not commit the CSV. On Render, set it on the service **Environment** page the same way as the other CSV variables.
+
+Real rows stay out of git. Tests use fake titles in the test file.
+
+The header row is exactly:
+
+`id,type,title,detail,date,status`
+
+| Column | Role |
+| --- | --- |
+| id | Required. Stable id. A repeated id makes the file unreadable. |
+| type | `past_due`, `due_soon`, `watch`, or `info`. Capitals are ignored. |
+| title | Required. The row text. |
+| detail | Short text on the right, such as `due Nov 28` or `21 days`. May be blank. |
+| date | `YYYY-MM-DD`. May be blank. A blank date sorts last inside its group. |
+| status | `open` or `dismissed`. Capitals are ignored. Only `open` rows are shown. |
+
+A CSV that cannot be read shows a warning and no rows. The warning does not include cells from the file.
+
+The title line is `Alerts` with a count of the open alerts still visible in this session, and a one-line legend on that same line: Past due (red), Due within 7 days (amber), Watch (blue), and Info (gray). Under that is `As of` today's date. Groups follow in that same order. A group with no open rows is left out. Each group has a small uppercase header and a count. A row has a colored left border and a light tint of that color, an icon, the title, the detail on the right, and a small Dismiss link.
+
+Dismiss hides that alert until the browser session ends. It does not change the CSV. The line under the date says permanent dismissal happens in the daily sync.
+
+The sidebar Alerts link shows a red count of those same open alerts when the count is greater than zero.
+
+Profit & Loss shows a compact list at the top when any open alert is past due or due soon: those two types only, past due first, at most five rows. Watch and info stay on the Alerts page. The list is omitted when there is nothing in those two types.
+
 ## Profit & Loss
 
-The period picker is at the top of the page. The choices are This month (the default), Last month, Quarter to date, Year to date, and Last 12 months. The exact dates are shown under the selector. This month, quarter to date, year to date, and the last 12 months end today. Last month is the previous calendar month, from the 1st through the last day. Quarter to date starts on the first day of the current calendar quarter. The last 12 months start the day after the same date a year ago.
+When an open alert is past due or due within 7 days, that short list is the first thing on the page. The period picker follows it, and is at the top when that list is empty. The choices are This month (the default), Last month, Quarter to date, Year to date, and Last 12 months. The exact dates are shown under the selector. This month, quarter to date, year to date, and the last 12 months end today. Last month is the previous calendar month, from the 1st through the last day. Quarter to date starts on the first day of the current calendar quarter. The last 12 months start the day after the same date a year ago.
 
 For the selected period, four figures sit under the picker: total income, total expenses, net, and a monthly run rate. Net is green when positive and red when negative. The run rate is the average net per calendar month. A period shorter than a month is scaled to 30 days, and the card says so. Under that, a debt snapshot shows the total current credit card balance and estimated loan interest for this month (current balance and APR, labeled est.). When a loan schedule is configured, that interest figure also includes scheduled interest for payment dates this month, and each scheduled loan is listed with its remaining balance and next payment. Next to it, expected income for the next calendar month uses each source's frequency and last payment: monthly sources repeat the last amount, quarterly sources count only when the last payment plus three months falls in that next month, and irregular sources are excluded and named. A bar chart shows income and expenses for the last six months, with net as a line. The current month runs through today.
 
@@ -359,7 +388,7 @@ A profit-and-loss CSV that cannot be read shows a warning and no figures. The wa
 - Statement-file income: set `Source Kind` to `income` and put the amount in `Income` (or in `Net Spend` if that column is the amount). That stays on the statement summary. It does not change Profit & Loss cash income.
 - A new kind with its own total rules: add one `SourceKind` entry in `kirbancials/schema.py`.
 
-Statement loading lives in `kirbancials/data.py`. Transactions and balances live in `kirbancials/activity.py`. Asset rows live in `kirbancials/assets.py`. The balance sheet lives in `kirbancials/balance_sheet.py`. Bills, property taxes, and entity fees live in `kirbancials/bills.py`. The VWH portfolio lives in `kirbancials/vwh.py`. Trending math lives in `kirbancials/vwh_trend.py`.
+Statement loading lives in `kirbancials/data.py`. Transactions and balances live in `kirbancials/activity.py`. Asset rows live in `kirbancials/assets.py`. The balance sheet lives in `kirbancials/balance_sheet.py`. Bills, property taxes, and entity fees live in `kirbancials/bills.py`. Finance alerts live in `kirbancials/alerts.py`. The VWH portfolio lives in `kirbancials/vwh.py`. Trending math lives in `kirbancials/vwh_trend.py`.
 
 ## Deploy on Render
 
@@ -405,6 +434,7 @@ Do not commit them. On the service **Environment** page:
 - **Bills.** Set `FINANCE_BILLS_CSV` to the raw CSV. The header is `Description,Type,Current Balance,Statement Balance,Amount Paid,Amount Still Due,Interest Rate,Statement Ending Date,Due Date,Paid Date,Notes`. Optional columns: `Account Match` and `Section`. Plain text, not gzipped. Leave it unset and the Bills tab says no bills are configured. Leave `Section` off and the page infers each row from Description.
 - **Property taxes.** Set `FINANCE_PROP_TAXES_CSV` to the raw CSV. The header is `Property,Total Amount Due,1st Half,Amount Paid,Remaining Due,Notes`. Plain text, not gzipped. Leave it unset and that tab says no property taxes are configured.
 - **Entity fees.** Set `FINANCE_ENTITY_FEES_CSV` to the raw CSV. The header is `LLC,State,Tax File Number,Registered Agent,Status,Reg Agent Fee,Reg Agent Due Date,Franchise Tax,Franchise Tax Due Date,Paid From,Notes`. Plain text, not gzipped. Leave it unset and that tab says no entity fees are configured.
+- **Alerts.** Set `FINANCE_ALERTS_CSV` to the raw CSV. The header is `id,type,title,detail,date,status`. Plain text, not gzipped. Leave it unset and the Alerts page says `No alerts`. Dismiss on the page lasts for the session. The daily sync is what sets `status` to `dismissed`.
 - **VWH P&L.** Set `FINANCE_VWH_PL_CSV` to the raw CSV. The header is `Month,Property ID,Address,Section,Account Number,Account Name,Amount,Source`. Plain text, not gzipped. Leave it unset and the page says `No VWH P&L data yet`.
 - **VWH property tax.** Set `FINANCE_VWH_TAX_CSV` to the raw CSV. The header is `Pay Year,Property ID,Address,Parcel,Spring Tax,Fall Tax,Annual Tax,Spring Status,Fall Status`. Plain text, not gzipped. Leave it unset and Trending still shows the run rate, and says property tax data isn't loaded yet.
 

@@ -6,8 +6,9 @@ is a Source Kind on the statement file. Profit and loss cash income is
 FINANCE_INCOME_CSV. Fixed loan schedules are FINANCE_LOAN_SCHEDULE_CSV.
 Balance sheet assets are FINANCE_ASSETS_CSV. Bills, property taxes, and
 entity fees are FINANCE_BILLS_CSV, FINANCE_PROP_TAXES_CSV, and
-FINANCE_ENTITY_FEES_CSV. The VWH portfolio profit and
-loss is FINANCE_VWH_PL_CSV. VWH property tax bills are FINANCE_VWH_TAX_CSV.
+FINANCE_ENTITY_FEES_CSV. Finance alerts are FINANCE_ALERTS_CSV.
+The VWH portfolio profit and loss is FINANCE_VWH_PL_CSV. VWH property
+tax bills are FINANCE_VWH_TAX_CSV.
 Transaction rows keep the Plaid sign: positive charges, negative payments
 and credits.
 """
