@@ -181,7 +181,7 @@ Bills is its own sidebar page, after Balance Sheet. Logging in once covers it. T
 
 Real rows stay out of git. Tests use fake round numbers in the test file.
 
-**Export to Excel** downloads one workbook, `kirbancials-bills.xlsx`, with three sheets: `Bills`, `Property Taxes`, and `Entity Fees`. Each sheet has a totals row when it has any data rows. Dates are real dates. Dollar columns use a currency format. Interest rate uses a percent format. The workbook includes every bill, not only the type selected on screen. **Download CSV** on a tab downloads that tab. On Bills, the CSV follows the type filter. The CSV's last row is `Total` when the tab has rows. Dates in the CSV are `YYYY-MM-DD`. Money and the interest rate are plain numbers. The interest rate stays in percent points, such as `19.99`.
+**Export to Excel** downloads one workbook, `kirbancials-bills.xlsx`, with three sheets: `Bills`, `Property Taxes`, and `Entity Fees`. Each sheet has a totals row when it has any data rows. Dates are real dates. Dollar columns use a currency format. Interest rate uses a percent format. The workbook includes every bill, not only the type selected on screen. The on-screen Bills tab groups rows into sections. The workbook and the CSV stay one list and do not include the Section column. **Download CSV** on a tab downloads that tab. On Bills, the CSV follows the type filter. The CSV's last row is `Total` when the tab has rows. Dates in the CSV are `YYYY-MM-DD`. Money and the interest rate are plain numbers. The interest rate stays in percent points, such as `19.99`.
 
 A CSV that cannot be read shows a warning and no rows for that tab. The warning does not include cells from the file.
 
@@ -191,7 +191,7 @@ The header row is exactly:
 
 `Description,Type,Current Balance,Statement Balance,Amount Paid,Amount Still Due,Interest Rate,Statement Ending Date,Due Date,Paid Date,Notes`
 
-`Account Match` is optional. Leave the column off when every current balance is typed in.
+`Account Match` is optional. Leave the column off when every current balance is typed in. `Section` is optional and comes last. Leave it off and every row is inferred from Description.
 
 | Column | Role |
 | --- | --- |
@@ -203,16 +203,19 @@ The header row is exactly:
 | Amount Still Due | Plain decimal. May be blank. The totals row adds this column as entered. It is not recomputed from the other amounts. |
 | Interest Rate | Percent points, such as `19.99` or `19.99%`. Both mean 19.99%. Do not use a fraction such as `0.1999`. May be blank. |
 | Statement Ending Date | `YYYY-MM-DD`. `M/D/YYYY` is also accepted. May be blank. |
-| Due Date | Same date forms. The table sorts by this date. A blank due date sorts last. |
+| Due Date | Same date forms. Each section sorts by this date. A blank due date sorts last. |
 | Paid Date | Same date forms. May be blank. |
 | Notes | Free text. May be blank. |
 | Account Match | Optional. The `Account` name from `FINANCE_BALANCES_CSV`. Capitals and surrounding spaces are ignored. When it names a credit card or a loan, Current Balance on the page is that account's latest balance. A checking or savings account is not used. A name that is not in the balance file keeps the Current Balance cell. |
+| Section | Optional, last column. One of `Credit Cards`, `Lines of Credit`, `Car Payments`, `Property Taxes`, or `Other`. Capitals and extra spaces are ignored. A blank or unrecognized value is inferred from Description. The column is not shown. Leave it off and every row is inferred. |
 
 Amounts are plain decimals, such as `1000.00` or `1000`. A leading `$`, thousands separators, and parentheses for a negative (`($12.00)`) are also accepted. Any other text makes the file unreadable.
 
-The page compares due dates with today's date, the same clock as the Balance Sheet `As of` line. A row is red when the due date is before today and Amount Still Due is greater than zero. A row is amber when the due date is today or at most 7 days later. A blank due date is neither.
+The page compares due dates with today's date, the same clock as the Balance Sheet `As of` line. A row is red when the due date is before today and Amount Still Due is greater than zero. A row is amber when the due date is today or at most 7 days later. A blank due date is neither. A paid row, with nothing still due, is neither.
 
-The totals row adds Current Balance, Statement Balance, Amount Paid, and Amount Still Due for the rows in the type filter. A blank amount counts as zero in that total.
+The Bills tab groups the filtered rows into five sections, in this order: Credit Cards, Lines of Credit, Car Payments, Property Taxes, and Other. Each section has a compact subheader. A section with no rows says `None yet` and has no table. A section with rows sorts by due date and has a subtotal of Current Balance, Statement Balance, Amount Paid, and Amount Still Due. The grand total under the sections adds the same columns for every row in the type filter. A blank amount counts as zero in those totals.
+
+When Section is blank, missing, or not one of those five names, the description decides the section. The match ignores capitals. `Property Tax` is Property Taxes. `Line of Credit` or `LOC` as its own word is Lines of Credit. `Auto Loan` or `Jeep Loan` is Car Payments. Those phrases win over a card name in the same description, so `BOA Auto Loan` is a car payment. Otherwise `Amex`, `Citi`, `Citibank`, `BOA`, `Bank of America`, `Capital One`, `Nordstrom`, `Neiman`, or `Bonvoy` is Credit Cards. Anything else is Other. An explicit Section value wins over the description.
 
 #### Property taxes (`FINANCE_PROP_TAXES_CSV`)
 
@@ -399,7 +402,7 @@ Do not commit them. On the service **Environment** page:
 - **Income.** Set `FINANCE_INCOME_CSV` to the raw CSV (`Transaction ID`, `Date`, `Source`, `Description`, `Amount`). Plain text, not gzipped. Leave it unset to show income as `$0.00`.
 - **Loan schedule.** Set `FINANCE_LOAN_SCHEDULE_CSV` to the raw CSV. The header is `Loan ID,Lender,Loan Name,Collateral,Rate,Payment Number,Payment Date,Payment,Interest,Principal,Remaining Balance`. Plain text, not gzipped. Leave it unset to leave scheduled loans out.
 - **Assets.** Set `FINANCE_ASSETS_CSV` to the raw CSV. The header is `Asset ID,Asset Name,Category,Acquired Date,Cost Basis,Market Value,Valuation Date,Valuation Source,Linked Loan ID,Income Source ID,Notes`. Plain text, not gzipped. Leave it unset to show cash and liabilities only.
-- **Bills.** Set `FINANCE_BILLS_CSV` to the raw CSV. The header is `Description,Type,Current Balance,Statement Balance,Amount Paid,Amount Still Due,Interest Rate,Statement Ending Date,Due Date,Paid Date,Notes`. Optional column: `Account Match`. Plain text, not gzipped. Leave it unset and the Bills tab says no bills are configured.
+- **Bills.** Set `FINANCE_BILLS_CSV` to the raw CSV. The header is `Description,Type,Current Balance,Statement Balance,Amount Paid,Amount Still Due,Interest Rate,Statement Ending Date,Due Date,Paid Date,Notes`. Optional columns: `Account Match` and `Section`. Plain text, not gzipped. Leave it unset and the Bills tab says no bills are configured. Leave `Section` off and the page infers each row from Description.
 - **Property taxes.** Set `FINANCE_PROP_TAXES_CSV` to the raw CSV. The header is `Property,Total Amount Due,1st Half,Amount Paid,Remaining Due,Notes`. Plain text, not gzipped. Leave it unset and that tab says no property taxes are configured.
 - **Entity fees.** Set `FINANCE_ENTITY_FEES_CSV` to the raw CSV. The header is `LLC,State,Tax File Number,Registered Agent,Status,Reg Agent Fee,Reg Agent Due Date,Franchise Tax,Franchise Tax Due Date,Paid From,Notes`. Plain text, not gzipped. Leave it unset and that tab says no entity fees are configured.
 - **VWH P&L.** Set `FINANCE_VWH_PL_CSV` to the raw CSV. The header is `Month,Property ID,Address,Section,Account Number,Account Name,Amount,Source`. Plain text, not gzipped. Leave it unset and the page says `No VWH P&L data yet`.
