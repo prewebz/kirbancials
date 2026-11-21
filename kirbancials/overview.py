@@ -15,7 +15,7 @@ import pandas as pd
 
 from kirbancials.activity import account_balance_kind, latest_account_balances
 from kirbancials.income import total_received
-from kirbancials.periods import Period, add_months, resolve_period
+from kirbancials.periods import Period, add_months, prior_calendar_month, resolve_period
 from kirbancials.sources import INCOME_SOURCES, IncomeSource
 from kirbancials.spend import expense_lines
 
@@ -149,6 +149,33 @@ def expected_income_next_month(
         elif kind == "quarterly" and _in_month(add_months(last_date, 3), window):
             total += amount
     return ExpectedIncome(total, tuple(irregular))
+
+
+def prior_month_expenses(
+    transactions: pd.DataFrame,
+    monthly: pd.DataFrame,
+    period: Period,
+    balances: pd.DataFrame | None = None,
+    schedule: pd.DataFrame | None = None,
+) -> float | None:
+    """Total expenses for the calendar month before `period`.
+
+    The total is the same sum the profit and loss page uses for the selected
+    period. None means that month has no expense data, so the comparison
+    stays hidden. A month the transaction window covers is returned even
+    when the total is $0.
+    """
+    prior = prior_calendar_month(period)
+    if prior is None or prior.end is None:
+        return None
+    total = float(
+        sum(line.total for line in expense_lines(transactions, monthly, prior, balances, schedule))
+    )
+    available = expense_data_start(transactions)
+    uncovered = available is None or prior.end < available
+    if uncovered and total == 0:
+        return None
+    return total
 
 
 def expense_data_start(transactions: pd.DataFrame | None) -> date | None:

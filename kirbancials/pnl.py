@@ -31,6 +31,7 @@ from kirbancials.overview import (
     expense_data_start,
     income_expense_by_month,
     monthly_run_rate,
+    prior_month_expenses,
     recent_month_periods,
 )
 from kirbancials.periods import PERIOD_KEYS, PERIOD_LABELS, Period, format_period, period_choice, resolve_period
@@ -71,8 +72,9 @@ def render_profit_and_loss() -> None:
     expenses = sum(line.total for line in lines)
     net = net_profit(income, expenses)
     available_from = expense_data_start(transactions)
+    prior_expenses = prior_month_expenses(transactions, monthly, period, balances, schedule)
 
-    _render_summary(income, expenses, net, period, available_from)
+    _render_summary(income, expenses, net, period, available_from, prior_expenses)
     _render_snapshot(balances, deposits, today, schedule)
     _render_trend(transactions, monthly, deposits, balances, today, available_from, schedule)
 
@@ -210,11 +212,17 @@ def _render_summary(
     net: float,
     period: Period,
     available_from: date | None,
+    prior_expenses: float | None = None,
 ) -> None:
     rate = monthly_run_rate(net, period)
     columns = st.columns(4)
     columns[0].metric("Total income", format_money(income), border=True)
-    columns[1].metric("Total expenses", format_money(expenses), border=True)
+    expense_metric: dict[str, object] = {"border": True}
+    if prior_expenses is not None:
+        expense_metric["delta"] = f"Last month: {format_money(prior_expenses)}"
+        expense_metric["delta_color"] = "gray"
+        expense_metric["delta_arrow"] = "off"
+    columns[1].metric("Total expenses", format_money(expenses), **expense_metric)
     columns[2].metric("Net", format_signed_money(net), border=True)
     columns[3].metric(
         "Monthly run rate",

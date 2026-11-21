@@ -731,5 +731,34 @@ _expense_rows(
         self.assertLess(page.index("_expense_rows(schedule_lines, period)"), page.index("**Total expenses**"))
 
 
+class PriorMonthLabelTests(unittest.TestCase):
+    def test_header_shows_a_gray_last_month_line_and_hides_it_without_data(self) -> None:
+        from kirbancials.formatting import format_money
+        from streamlit.proto.Metric_pb2 import Metric as MetricProto
+
+        script = """
+from datetime import date
+
+from kirbancials.periods import resolve_period
+from kirbancials.pnl import _render_summary
+
+period = resolve_period("this-month", date(2026, 11, 12))
+_render_summary(1000, 180, 820, period, date(2026, 10, 1), 100)
+_render_summary(0, 50, -50, period, None, None)
+"""
+        app = AppTest.from_string(script, default_timeout=30).run()
+        self.assertEqual(list(app.exception), [])
+        shown = app.metric[1]
+        hidden = app.metric[5]
+        self.assertEqual(shown.label, "Total expenses")
+        self.assertEqual(shown.value, format_money(180))
+        self.assertEqual(shown.delta, f"Last month: {format_money(100)}")
+        self.assertEqual(shown.color, MetricProto.MetricColor.GRAY)
+        self.assertEqual(shown.direction, MetricProto.MetricDirection.NONE)
+        self.assertEqual(hidden.label, "Total expenses")
+        self.assertEqual(hidden.value, format_money(50))
+        self.assertEqual(hidden.delta, "")
+
+
 if __name__ == "__main__":
     unittest.main()
