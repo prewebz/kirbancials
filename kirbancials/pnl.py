@@ -11,6 +11,7 @@ import streamlit as st
 
 from kirbancials.activity import load_balances, load_transactions, resolve_balances, resolve_transactions
 from kirbancials.data import FinanceDataError, load_dataset, resolve_origin
+from kirbancials.forecast import ExpenseForecast, month_end_forecast
 from kirbancials.formatting import format_money, format_signed_money, show_money_table
 from kirbancials.income import (
     IncomeLine,
@@ -30,7 +31,6 @@ from kirbancials.overview import (
     expense_coverage_note,
     expense_data_start,
     income_expense_by_month,
-    monthly_run_rate,
     prior_month_expenses,
     recent_month_periods,
 )
@@ -73,8 +73,9 @@ def render_profit_and_loss() -> None:
     net = net_profit(income, expenses)
     available_from = expense_data_start(transactions)
     prior_expenses = prior_month_expenses(transactions, monthly, period, balances, schedule)
+    forecast = month_end_forecast(transactions, period.end or today)
 
-    _render_summary(income, expenses, net, period, available_from, prior_expenses)
+    _render_summary(income, expenses, net, period, available_from, prior_expenses, forecast)
     _render_snapshot(balances, deposits, today, schedule)
     _render_trend(transactions, monthly, deposits, balances, today, available_from, schedule)
 
@@ -213,8 +214,8 @@ def _render_summary(
     period: Period,
     available_from: date | None,
     prior_expenses: float | None = None,
+    forecast: ExpenseForecast | None = None,
 ) -> None:
-    rate = monthly_run_rate(net, period)
     columns = st.columns(4)
     columns[0].metric("Total income", format_money(income), border=True)
     expense_metric: dict[str, object] = {"border": True}
@@ -224,17 +225,50 @@ def _render_summary(
         expense_metric["delta_arrow"] = "off"
     columns[1].metric("Total expenses", format_money(expenses), **expense_metric)
     columns[2].metric("Net", format_signed_money(net), border=True)
-    columns[3].metric(
-        "Monthly run rate",
-        format_money(rate.amount),
-        delta=rate.label,
-        delta_color="off",
-        delta_arrow="off",
-        border=True,
-    )
+    _forecast_metric(columns[3], forecast)
     note = expense_coverage_note(period.start, available_from)
     if note:
         st.caption(note)
+    if forecast is not None:
+        st.caption(
+            "One-time so far "
+            f"{format_money(forecast.one_time)}"
+            " · Bills still to come "
+            f"{format_money(forecast.bills_still_to_come)}"
+            " · Everyday pace "
+            f"{format_money(forecast.everyday_pace)}/day"
+        )
+        _forecast_expander(forecast)
+
+
+def _forecast_metric(column, forecast: ExpenseForecast | None) -> None:
+    """Month-end card forecast. Last month's actual spend sits under it in gray."""
+    if forecast is None:
+        column.metric("Month-end forecast", format_money(None), border=True)
+        return
+    metric: dict[str, object] = {"border": True}
+    if forecast.last_month_actual is not None:
+        metric["delta"] = f"Last month: {format_money(forecast.last_month_actual)}"
+        metric["delta_color"] = "gray"
+        metric["delta_arrow"] = "off"
+    column.metric("Month-end forecast", format_money(forecast.total), **metric)
+
+
+def _forecast_expander(forecast: ExpenseForecast) -> None:
+    with st.expander("Charges flagged this month"):
+        st.caption("One-time charges and recurring bills are counted once. They are not spread over the rest of the month.")
+        _flag_block("One-time", forecast.one_time_charges)
+        _flag_block("Recurring", forecast.recurring_charges)
+        _flag_block("Bills still to come", forecast.expected_bills)
+
+
+def _flag_block(title: str, charges: tuple) -> None:
+    st.markdown(f"**{title}**")
+    if not charges:
+        st.caption("None")
+        return
+    for charge in charges:
+        st.write(f"{charge.when.isoformat()} · {charge.merchant} · {format_money(charge.amount)}")
 
 
 def _render_snapshot(
