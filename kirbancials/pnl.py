@@ -73,7 +73,7 @@ def render_profit_and_loss() -> None:
     net = net_profit(income, expenses)
     available_from = expense_data_start(transactions)
     prior_expenses = prior_month_expenses(transactions, monthly, period, balances, schedule)
-    forecast = month_end_forecast(transactions, period.end or today)
+    forecast = month_end_forecast(transactions, period.end or today, monthly, balances, schedule)
 
     _render_summary(income, expenses, net, period, available_from, prior_expenses, forecast)
     _render_snapshot(balances, deposits, today, schedule)
@@ -230,19 +230,24 @@ def _render_summary(
     if note:
         st.caption(note)
     if forecast is not None:
+        pieces = [
+            f"One-time so far {format_money(forecast.one_time)}",
+            f"Bills still to come {format_money(forecast.bills_still_to_come)}",
+            f"Everyday pace {format_money(max(forecast.everyday_pace, 0.0))}/day",
+            f"Interest and statements {format_money(forecast.other_expenses)}",
+        ]
+        if forecast.other_card_spend:
+            pieces.append(f"Other card charges {format_money(forecast.other_card_spend)}")
+        st.caption(" · ".join(pieces))
         st.caption(
-            "One-time so far "
-            f"{format_money(forecast.one_time)}"
-            " · Bills still to come "
-            f"{format_money(forecast.bills_still_to_come)}"
-            " · Everyday pace "
-            f"{format_money(forecast.everyday_pace)}/day"
+            "Forecast of total expenses. Card charges are paced. "
+            "Interest, scheduled loans, and statement cards are the full month."
         )
         _forecast_expander(forecast)
 
 
 def _forecast_metric(column, forecast: ExpenseForecast | None) -> None:
-    """Month-end card forecast. Last month's actual spend sits under it in gray."""
+    """Month-end total-expense forecast. Last month's actual total sits under it in gray."""
     if forecast is None:
         column.metric("Month-end forecast", format_money(None), border=True)
         return
@@ -256,7 +261,11 @@ def _forecast_metric(column, forecast: ExpenseForecast | None) -> None:
 
 def _forecast_expander(forecast: ExpenseForecast) -> None:
     with st.expander("Charges flagged this month"):
-        st.caption("One-time charges and recurring bills are counted once. They are not spread over the rest of the month.")
+        st.caption(
+            "One-time charges and recurring bills are counted once. "
+            "They are not spread over the rest of the month. "
+            "Interest and statement cards are included in the forecast total, not in this list."
+        )
         _flag_block("One-time", forecast.one_time_charges)
         _flag_block("Recurring", forecast.recurring_charges)
         _flag_block("Bills still to come", forecast.expected_bills)
