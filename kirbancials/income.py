@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import io
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -186,6 +186,30 @@ def received_for_source(
 def net_profit(income: float, expenses: float) -> float:
     """Cash income minus expenses for the same period."""
     return income - expenses
+
+
+def is_lbsf_income_line(line: IncomeLine) -> bool:
+    """True when this P&L income line is LBSF income.
+
+    Lines show up as "LBSF Interest" and "LBSF Principal (LTCG)". The match is
+    the line name, not the source id or the frequency in parentheses. Any name
+    that contains LBSF counts, ignoring case.
+    """
+    return "lbsf" in line.name.casefold()
+
+
+def lbsf_income_total(lines: Sequence[IncomeLine]) -> float:
+    """Sum of income lines whose name contains LBSF. Other lines stay out."""
+    return sum((line.total for line in lines if is_lbsf_income_line(line)), 0.0)
+
+
+def net_excluding_lbsf(income: float, expenses: float, lines: Sequence[IncomeLine]) -> float:
+    """Net after removing LBSF income. Expenses stay as they are.
+
+    ``income`` and ``lines`` have to be the same period and filters the Net
+    figure already uses. LBSF is removed from income only.
+    """
+    return net_profit(income - lbsf_income_total(lines), expenses)
 
 
 def rows_in_period(deposits: pd.DataFrame, period: Period) -> pd.DataFrame:

@@ -769,5 +769,45 @@ _render_summary(0, 50, -50, period, None, None)
         self.assertEqual(hidden.delta, "")
 
 
+class NetExcludingLbsfDisplayTests(unittest.TestCase):
+    def test_net_metric_has_a_gray_line_for_the_same_period(self) -> None:
+        from kirbancials.formatting import format_money, format_signed_money
+        from streamlit.proto.Metric_pb2 import Metric as MetricProto
+
+        script = """
+from datetime import date
+
+from kirbancials.periods import resolve_period
+from kirbancials.pnl import _render_summary
+
+period = resolve_period("this-month", date(2026, 11, 12))
+_render_summary(1690, 80, 1610, period, date(2026, 10, 1), 100, None, 960)
+_render_summary(500, 80, 420, period, None, None)
+"""
+        app = AppTest.from_string(script, default_timeout=30).run()
+        self.assertEqual(list(app.exception), [])
+        shown = app.metric[2]
+        self.assertEqual(shown.label, "Net")
+        self.assertEqual(shown.value, format_signed_money(1610))
+        self.assertEqual(shown.delta, f"Net excl. LBSF: {format_money(960)}")
+        self.assertEqual(shown.color, MetricProto.MetricColor.GRAY)
+        self.assertEqual(shown.direction, MetricProto.MetricDirection.NONE)
+        untouched = app.metric[6]
+        self.assertEqual(untouched.label, "Net")
+        self.assertEqual(untouched.value, format_signed_money(420))
+        self.assertEqual(untouched.delta, f"Net excl. LBSF: {format_money(420)}")
+
+    def test_page_builds_the_line_from_the_period_income_lines(self) -> None:
+        import inspect
+
+        from kirbancials.pnl import render_profit_and_loss
+
+        source = inspect.getsource(render_profit_and_loss)
+        self.assertLess(source.index("income_lines(deposits, period)"), source.index("net_excluding_lbsf"))
+        self.assertLess(source.index("net = net_profit(income, expenses)"), source.index("net_excluding_lbsf"))
+        self.assertLess(source.index("net_excluding_lbsf"), source.index("_render_summary"))
+        self.assertIn("net_excluding_lbsf(income, expenses, received)", source)
+
+
 if __name__ == "__main__":
     unittest.main()

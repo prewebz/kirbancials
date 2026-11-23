@@ -27,6 +27,7 @@ from kirbancials.income import (
     income_lines,
     income_table,
     load_income,
+    net_excluding_lbsf,
     net_profit,
     resolve_income,
 )
@@ -79,11 +80,22 @@ def render_profit_and_loss() -> None:
     shown = _discretionary_rows(lines, transactions, period)
     expenses = sum(amount for _line, amount in shown)
     net = net_profit(income, expenses)
+    # Same income lines and expenses as Net. Only LBSF income is left out.
+    net_ex_lbsf = net_excluding_lbsf(income, expenses, received)
     available_from = expense_data_start(transactions)
     prior_expenses = discretionary_previous_month(transactions, monthly, period, balances, schedule)
     forecast = month_end_forecast(transactions, period.end or today, monthly, balances, schedule)
 
-    _render_summary(income, expenses, net, period, available_from, prior_expenses, forecast)
+    _render_summary(
+        income,
+        expenses,
+        net,
+        period,
+        available_from,
+        prior_expenses,
+        forecast,
+        net_ex_lbsf,
+    )
     _render_snapshot(balances, deposits, today, schedule)
     _render_trend(transactions, monthly, deposits, balances, today, available_from, schedule)
 
@@ -213,6 +225,7 @@ def _render_summary(
     available_from: date | None,
     prior_expenses: float | None = None,
     forecast: ExpenseForecast | None = None,
+    net_ex_lbsf: float | None = None,
 ) -> None:
     columns = st.columns(4)
     columns[0].metric("Total income", format_money(income), border=True)
@@ -222,7 +235,16 @@ def _render_summary(
         expense_metric["delta_color"] = "gray"
         expense_metric["delta_arrow"] = "off"
     columns[1].metric("Total expenses", format_money(expenses), **expense_metric)
-    columns[2].metric("Net", format_signed_money(net), border=True)
+    # No LBSF lines means the secondary figure is the same Net.
+    excluded = net if net_ex_lbsf is None else net_ex_lbsf
+    columns[2].metric(
+        "Net",
+        format_signed_money(net),
+        delta=_net_excl_lbsf_delta(excluded),
+        delta_color="gray",
+        delta_arrow="off",
+        border=True,
+    )
     _forecast_metric(columns[3], forecast)
     note = expense_coverage_note(period.start, available_from)
     if note:
@@ -243,6 +265,11 @@ def _render_summary(
         )
         st.caption(FINANCING_NOTE)
         _forecast_expander(forecast)
+
+
+def _net_excl_lbsf_delta(amount: float) -> str:
+    """Secondary line under Net. Same gray treatment as the other summary deltas."""
+    return f"Net excl. LBSF: {format_money(amount)}"
 
 
 def _forecast_metric(column, forecast: ExpenseForecast | None) -> None:
