@@ -41,6 +41,7 @@ from kirbancials.sources import (
     income_source_by_id,
     loan_id_from_schedule_source,
 )
+from kirbancials.vehicles import VEHICLES_CATEGORY, VEHICLES_LINK_CAPTION, VEHICLES_PAGE
 
 CASH_GROUP = "Cash"
 MORTGAGE_GROUP = "Mortgages / property loans"
@@ -220,6 +221,9 @@ def _render(
 
     st.subheader("Assets")
     _show_sheet(sheet.asset_rows)
+    if _group_items(sheet.asset_rows, VEHICLES_CATEGORY):
+        st.page_link(VEHICLES_PAGE, label=VEHICLES_CATEGORY)
+        st.caption(VEHICLES_LINK_CAPTION)
     if balances.empty:
         st.caption("No balance data yet.")
     elif _group_items(sheet.asset_rows, CASH_GROUP) == ():
@@ -452,8 +456,10 @@ def _asset_rows(
 ) -> list[SheetRow]:
     """Cash accounts and each asset, once, then Total assets.
 
-    Category subtotals are left off. A category usually has one asset, so a
-    subtotal would repeat that amount.
+    A category with two or more assets gets a subtotal, the same rule as
+    liability groups. One asset is listed alone so the subtotal does not
+    repeat that amount. Vehicles is one of those categories: several rows
+    stay in the Vehicles group and the subtotal is their market values.
     """
     rows = list(cash)
     grouped: dict[str, list[SheetRow]] = {}
@@ -466,7 +472,7 @@ def _asset_rows(
             SheetRow(position.category, position.name, position.market_value, "item")
         )
     for category in order:
-        rows.extend(grouped[category])
+        rows.extend(_with_subtotal(category, grouped[category]))
     rows.append(SheetRow(TOTAL_GROUP, "Total assets", total_assets, "total"))
     return rows
 

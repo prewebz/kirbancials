@@ -2,7 +2,7 @@
 
 The password gate runs before every page. Profit & Loss is the landing page,
 the overview. Alerts is the next sidebar page. Balance Sheet follows Alerts.
-Bills follows Balance Sheet. VWH P&L follows Bills.
+Vehicles follows Balance Sheet. Bills follows Vehicles. VWH P&L follows Bills.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ navigation = st.navigation(
         st.Page("views/profit_and_loss.py", title="Profit & Loss", default=True),
         st.Page("views/alerts.py", title="Alerts", url_path="alerts"),
         st.Page("views/balance_sheet.py", title="Balance Sheet", url_path="balance-sheet"),
+        st.Page("views/vehicles.py", title="Vehicles", url_path="vehicles"),
         st.Page("views/bills.py", title="Bills", url_path="bills"),
         st.Page("views/vwh_pl.py", title="VWH P&L", url_path="vwh"),
         st.Page("views/source_detail.py", title="Source detail", url_path="source"),
@@ -42,6 +43,7 @@ with st.sidebar:
     st.page_link("views/profit_and_loss.py", label="Profit & Loss")
     st.page_link("views/alerts.py", label=alerts_nav_label(open_alert_count()))
     st.page_link("views/balance_sheet.py", label="Balance Sheet")
+    st.page_link("views/vehicles.py", label="Vehicles")
     st.page_link("views/bills.py", label="Bills")
     st.page_link("views/vwh_pl.py", label="VWH P&L")
     st.page_link("views/daily.py", label="Daily spending")

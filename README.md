@@ -2,7 +2,7 @@
 
 Personal finance dashboard for credit card statement summaries and other expenses. It is a [Streamlit](https://streamlit.io/) app meant to run as a free Python web service on [Render](https://render.com/).
 
-After login the landing page is **Profit & Loss**, the overview. **Alerts** is the next page in the sidebar. **Balance Sheet** follows Alerts. **Bills** follows Balance Sheet. **VWH P&L** follows Bills. Profit & Loss totals cash income and expenses for a period you pick. Each expense name links to that source, and each income total links to that income source. **Daily spending** and **Monthly statements** stay available from the sidebar.
+After login the landing page is **Profit & Loss**, the overview. **Alerts** is the next page in the sidebar. **Balance Sheet** follows Alerts. **Vehicles** follows Balance Sheet. **Bills** follows Vehicles. **VWH P&L** follows Bills. Profit & Loss totals cash income and expenses for a period you pick. Each expense name links to that source, and each income total links to that income source. **Daily spending** and **Monthly statements** stay available from the sidebar.
 
 Expense sources are registered in `kirbancials/sources.py`. Citibank - 7690 reads transactions for `Citi AAdvantage card ending 7690`. Nordstrom reads statement months for `Nordstrom card ending 5488`. Any other Account in the data is still listed under its own name. See [Adding sources](#adding-sources).
 
@@ -149,7 +149,7 @@ The header row is exactly:
 | --- | --- |
 | Asset ID | Stable id for the row. A repeated id makes the file unreadable. |
 | Asset Name | Shown on the card. |
-| Category | Group on the assets table. Examples: `Real Estate`, `Note Receivable`, `Investment`, `Other`. |
+| Category | Group on the assets table. Examples: `Real Estate`, `Note Receivable`, `Investment`, `Vehicles`, `Other`. |
 | Acquired Date | `YYYY-MM-DD`. May be blank. |
 | Cost Basis | Plain decimal, such as `1000.00` or `1000`. May be blank. No dollar sign and no thousands separator. |
 | Market Value | Plain decimal. May be blank. A blank value is left out of the totals and shown as `n/a`. |
@@ -171,13 +171,35 @@ Total assets are cash plus each asset's market value. Total liabilities are the 
 
 Under the cards, one bordered card per asset shows the market value with its valuation date and source, the cost basis, and the gain or loss versus cost. The linked loan is the schedule's current remaining balance for that Loan ID. Equity is the market value minus that balance. With no linked loan, equity is the market value and the loan is `n/a`. LTV is the loan divided by the market value. When an income source id is set, the card also shows trailing-12-month cash income for that source, the yield (that income divided by market value), and cash on equity (that income minus the linked loan's trailing-12-month scheduled payments, divided by equity). A missing input is `n/a`.
 
-The assets table lists cash, then each asset, once. There is no category subtotal. Total assets is a line under the table. Cash is the current balance of accounts labeled `depository`, `cash`, `checking`, or `savings`. The liabilities table lists mortgages and other property loans from the schedule, other loans (auto loans and balance rows typed as loans), and credit cards. A group with two or more rows has a subtotal under the table. A group with one row does not. Dollar, percent, and date columns stay numbers, so clicking a header sorts by value. The cells still show `$` with commas, percents, and dates. A balance row whose account is a scheduled loan's Loan ID, or that loan's `Lender - Loan Name`, is not listed again. The schedule's remaining balance is the one that counts. The match ignores capitals.
+The assets table lists cash, then each asset, once. An asset category with two or more rows has a subtotal, the same rule as the liability groups. A category with one row does not, so the subtotal does not repeat that amount. Total assets is a line under the table. When the Vehicles category has any rows, a link under the table opens the Vehicles page. Cash is the current balance of accounts labeled `depository`, `cash`, `checking`, or `savings`. The liabilities table lists mortgages and other property loans from the schedule, other loans (auto loans and balance rows typed as loans), and credit cards. A group with two or more rows has a subtotal under the table. A group with one row does not. Dollar, percent, and date columns stay numbers, so clicking a header sorts by value. The cells still show `$` with commas, percents, and dates. A balance row whose account is a scheduled loan's Loan ID, or that loan's `Lender - Loan Name`, is not listed again. The schedule's remaining balance is the one that counts. The match ignores capitals.
 
 The bottom of the page says `Market values are entered manually from appraisals; update when a new valuation is available.`
 
+### Vehicles
+
+Vehicles is the sidebar page after Balance Sheet. Logging in once covers it. The page reads the same `FINANCE_ASSETS_CSV` as the balance sheet and keeps rows whose Category is exactly `Vehicles`. Boats and other vehicles stay in that same table. If the variable is missing or blank, the page says `No assets are configured.` A file that cannot be read shows the same warning as the balance sheet and no rows. Do not commit the CSV.
+
+The asset name is `YYYY Make Model Trim`, for example `2021 Sample Hauler EX`. A two-word make such as `Land Rover` stays together. A name that does not start with a year is shown in Model/Trim.
+
+Notes are free text. The page reads what it can:
+
+| Piece | Example | Column |
+| --- | --- | --- |
+| Miles | `42,300 miles (owner, Nov 22, 2026)` | Miles `42,300` |
+| Estimated miles | `~17,500 miles estimate` | Miles `~17,500 est.` |
+| Hours | `120 hours` or `~80 hours estimate` | Miles `120 hours` or `~80 hours est.` |
+| VIN last 6 | `VIN AB12CD` or `VIN last 6: AB12CD` | VIN, when any row has one |
+| Loan | `Loan: <Lender> ending <4 digits>` | Loan |
+
+The loan line is that shape only. The notes use `Loan: Wells Fargo ending 7635`, `Loan: Wells Fargo ending 8492`, `Loan: Truist ending 1001`, and `Loan: Stellantis ending 0001`. A vehicle with no loan has no loan line. A loan line that is not lender-plus-four-digits is shown raw, and Loan Balance stays blank.
+
+An estimate is marked with `~` or `est.` A vehicle with neither miles nor hours shows `—` in Miles. A note that does not match these pieces is shown in a Notes column, and any miles or loan that did match are still filled in.
+
+**Total value** at the top is the sum of market values. The table sorts by that value, highest first. Loan Balance is the latest balance-file amount when those four digits match exactly one loan account. The two Wells Fargo loans stay apart because `7635` and `8492` are different masks. Lender words break a tie and reject a contradictory name. A credit card that happens to end in the same four digits is not used. Equity is the estimated value minus that balance. With no loan line, equity is the estimated value. When a loan line does not match a balance, Loan Balance and Equity are left blank.
+
 ### Bills
 
-Bills is its own sidebar page, after Balance Sheet. Logging in once covers it. The page has three tabs: **Bills**, **Property Taxes**, and **Entity Fees**. Each tab reads its own environment variable. The value is the raw CSV text, not gzipped. If that variable is missing or blank, the tab says so and the rest of the page still loads. Do not commit these CSVs. On Render, set them on the service **Environment** page the same way as the other CSV variables.
+Bills is its own sidebar page, after Vehicles. Logging in once covers it. The page has three tabs: **Bills**, **Property Taxes**, and **Entity Fees**. Each tab reads its own environment variable. The value is the raw CSV text, not gzipped. If that variable is missing or blank, the tab says so and the rest of the page still loads. Do not commit these CSVs. On Render, set them on the service **Environment** page the same way as the other CSV variables.
 
 Real rows stay out of git. Tests use fake round numbers in the test file.
 
