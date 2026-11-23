@@ -12,10 +12,14 @@ import pandas as pd
 
 from kirbancials.data import FinanceDataError
 from kirbancials.income import (
+    IncomeLine,
     deposits_for_source,
     income_lines,
     income_table,
+    is_lbsf_income_line,
+    lbsf_income_total,
     load_income,
+    net_excluding_lbsf,
     net_profit,
     resolve_income,
 )
@@ -256,6 +260,83 @@ class IncomeNetTests(unittest.TestCase):
         self.assertEqual(income, 1565)
         self.assertEqual(net_profit(income, expenses), 1485)
         self.assertEqual(net_profit(0, expenses), -80)
+
+
+class LbsfNetTests(unittest.TestCase):
+    """Fake round deposits. LBSF is identified by the income line name."""
+
+    def test_name_contains_lbsf_and_other_income_stays(self) -> None:
+        lines = [
+            IncomeLine("chipotle_nnn", "Chipotle NNN", "Monthly", 1000),
+            IncomeLine("lbsf_interest", "LBSF Interest", "Monthly", 250),
+            IncomeLine("lbsf_principal", "LBSF Principal", "LTCG", 400),
+            IncomeLine("contains", "Partner LBSF note", "", 15),
+            IncomeLine("lower", "lbsf distribution", "", 5),
+            IncomeLine("side", "side_gig", "", 40),
+            IncomeLine("plain", "Interest", "Monthly", 9),
+            IncomeLine("prefixed_id", "LBSF", "", 0),
+        ]
+        self.assertEqual(lines[2].label, "LBSF Principal (LTCG)")
+        self.assertTrue(is_lbsf_income_line(lines[1]))
+        self.assertTrue(is_lbsf_income_line(lines[2]))
+        self.assertTrue(is_lbsf_income_line(lines[3]))
+        self.assertTrue(is_lbsf_income_line(lines[4]))
+        self.assertTrue(is_lbsf_income_line(lines[7]))
+        self.assertFalse(is_lbsf_income_line(lines[0]))
+        self.assertFalse(is_lbsf_income_line(lines[5]))
+        self.assertFalse(is_lbsf_income_line(lines[6]))
+        # The source id is not the match. A non-LBSF name stays even if the id says LBSF.
+        self.assertFalse(is_lbsf_income_line(IncomeLine("LBSF Interest", "Sample payroll", "Monthly", 80)))
+        self.assertEqual(lbsf_income_total(lines), 670)
+        income = sum(line.total for line in lines)
+        expenses = 80
+        self.assertEqual(net_profit(income, expenses), income - expenses)
+        self.assertEqual(net_excluding_lbsf(income, expenses, lines), income - 670 - expenses)
+        self.assertEqual(net_excluding_lbsf(income, expenses, []), net_profit(income, expenses))
+
+    def test_negative_lbsf_is_removed_from_income_only(self) -> None:
+        lines = [
+            IncomeLine("rent", "Sample rent", "Monthly", 1000),
+            IncomeLine("reversal", "LBSF Interest", "", -100),
+        ]
+        income = sum(line.total for line in lines)
+        self.assertEqual(income, 900)
+        # Dropping the reversal leaves the rent, then subtracts expenses.
+        self.assertEqual(net_excluding_lbsf(income, 50, lines), 950)
+
+    def test_period_keeps_only_lbsf_inside_the_selected_dates(self) -> None:
+        deposits = _deposits(
+            """Transaction ID,Date,Source,Description,Amount
+fake-rent,2026-11-01,chipotle_nnn,Sample rent,1000
+fake-int,2026-11-02,LBSF Interest,Sample interest,250
+fake-prin,2026-11-03,LBSF Principal (LTCG),Sample principal,400
+fake-old,2026-10-15,LBSF Interest,Old sample interest,999
+fake-other,2026-11-04,side_gig,Sample side,40
+fake-later,2026-11-13,LBSF Interest,After the sample today,70
+"""
+        )
+        this_month = resolve_period("this-month", TODAY)
+        lines = income_lines(deposits, this_month)
+        by_name = {line.name: line.total for line in lines}
+        self.assertEqual(by_name["LBSF Interest"], 250)
+        self.assertEqual(by_name["LBSF Principal (LTCG)"], 400)
+        self.assertEqual(by_name["Chipotle NNN"], 1000)
+        self.assertEqual(by_name["side_gig"], 40)
+        income = total_income(deposits, this_month)
+        self.assertEqual(income, sum(line.total for line in lines))
+        self.assertEqual(income, 1690)
+        expenses = 80
+        net = net_profit(income, expenses)
+        self.assertEqual(net, 1610)
+        self.assertEqual(lbsf_income_total(lines), 650)
+        self.assertEqual(net_excluding_lbsf(income, expenses, lines), 960)
+
+        last_month = resolve_period("last-month", TODAY)
+        last_lines = income_lines(deposits, last_month)
+        last_income = total_income(deposits, last_month)
+        self.assertEqual(last_income, 999)
+        self.assertEqual(lbsf_income_total(last_lines), 999)
+        self.assertEqual(net_excluding_lbsf(last_income, 0, last_lines), 0)
 
 
 if __name__ == "__main__":
