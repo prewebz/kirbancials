@@ -262,13 +262,47 @@ class BalanceSheetTests(unittest.TestCase):
             [
                 ("Real Estate", "Sample House", "item"),
                 ("Real Estate", "Sample Lot", "item"),
+                ("Real Estate", "Subtotal", "subtotal"),
                 (TOTAL_GROUP, "Total assets", "total"),
             ],
         )
         self.assertAlmostEqual(sheet.asset_rows[0].amount or 0, 40)
         self.assertAlmostEqual(sheet.asset_rows[1].amount or 0, 20)
+        self.assertAlmostEqual(_subtotal(sheet.asset_rows, "Real Estate") or 0, 60)
         self.assertAlmostEqual(sheet.total_assets, 60)
-        self.assertEqual([row for row in sheet.asset_rows if row.role == "subtotal"], [])
+
+    def test_vehicles_group_keeps_each_row_and_a_subtotal(self) -> None:
+        text = (
+            ASSET_HEADER
+            + "\nhouse,Sample House,Real Estate,2020-01-01,10,40,2026-01-01,Sample,,,\n"
+            + "car-1,2020 Sample Hauler EX,Vehicles,2020-01-01,10,30,2026-01-01,Sample,,,\n"
+            + "boat,2016 Sample Skiff,Vehicles,2016-01-01,10,12,2026-01-01,Sample,,,\n"
+            + "solo,2021 Sample Wagon,Vehicles,2021-06-01,10,8,2026-03-01,Sample,,,\n"
+        )
+        sheet = _sheet(text, balances=pd.DataFrame(), schedule=_schedule()[:0])
+        vehicle_rows = [row for row in sheet.asset_rows if row.group == "Vehicles"]
+        self.assertEqual(
+            [(row.item, row.role, row.amount) for row in vehicle_rows],
+            [
+                ("2020 Sample Hauler EX", "item", 30.0),
+                ("2016 Sample Skiff", "item", 12.0),
+                ("2021 Sample Wagon", "item", 8.0),
+                ("Subtotal", "subtotal", 50.0),
+            ],
+        )
+        self.assertEqual(
+            [(row.item, row.role) for row in sheet.asset_rows if row.group == "Real Estate"],
+            [("Sample House", "item")],
+        )
+        one = (
+            ASSET_HEADER
+            + "\ncar-1,2020 Sample Hauler EX,Vehicles,2020-01-01,10,30,2026-01-01,Sample,,,\n"
+        )
+        alone = _sheet(one, balances=pd.DataFrame(), schedule=_schedule()[:0])
+        self.assertEqual(
+            [(row.item, row.role) for row in alone.asset_rows if row.group == "Vehicles"],
+            [("2020 Sample Hauler EX", "item")],
+        )
 
     def test_two_mortgages_keep_a_subtotal(self) -> None:
         second = (

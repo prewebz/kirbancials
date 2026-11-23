@@ -540,6 +540,7 @@ PAGE_TITLES = {
     "profit_and_loss.py": "Profit & Loss",
     "alerts.py": "Alerts",
     "balance_sheet.py": "Balance Sheet",
+    "vehicles.py": "Vehicles",
     "bills.py": "Bills",
     "vwh_pl.py": "VWH P&L",
     "source_detail.py": "Source detail",

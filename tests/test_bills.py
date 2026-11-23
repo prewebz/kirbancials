@@ -707,14 +707,15 @@ class NavigationTests(unittest.TestCase):
         text = (ROOT / "app.py").read_text()
         pages = [line for line in text.splitlines() if "st.Page(" in line]
         self.assertIn("balance_sheet.py", pages[2])
-        self.assertIn("bills.py", pages[3])
-        self.assertIn('title="Bills"', pages[3])
-        self.assertIn('url_path="bills"', pages[3])
-        self.assertNotIn("default=True", pages[3])
+        self.assertIn("vehicles.py", pages[3])
+        self.assertIn("bills.py", pages[4])
+        self.assertIn('title="Bills"', pages[4])
+        self.assertIn('url_path="bills"', pages[4])
+        self.assertNotIn("default=True", pages[4])
         sidebar = text.split("with st.sidebar:", 1)[1]
         links = [line for line in sidebar.splitlines() if "st.page_link" in line]
-        self.assertIn("bills.py", links[3])
-        self.assertIn('label="Bills"', links[3])
+        self.assertIn("bills.py", links[4])
+        self.assertIn('label="Bills"', links[4])
         self.assertLess(text.index("require_login()"), text.index("navigation.run()"))
         view = (ROOT / "views" / "bills.py").read_text()
         self.assertIn('render_page_title("Bills", legend=BILL_LEGEND)', view)
